@@ -344,7 +344,9 @@ export function redigir(p, escolhas) {
   const faltaMes = meta == null ? null : meta - p.mes.agendamentos;
   const noMes =
     alvoMes == null
-      ? "No mês são " +
+      ? /* frase nominal: "No mês são nenhum lead" não concorda, e cliente sem
+           meta e sem benchmark (meta_usada nula) caía exatamente aí */
+        "No mês, " +
         quantos(p.mes.leads, "lead", "leads") +
         " e " +
         quantos(p.mes.agendamentos, "agendamento", "agendamentos")

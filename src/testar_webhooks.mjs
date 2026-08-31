@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { redigir } from "./redacao.js";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const LIVE = path.dirname(AQUI);
@@ -107,7 +108,10 @@ if (gabPath) {
   for (const x of difs) console.log("   ✗ " + x);
 }
 
-/* ── 5. redação por IA num cliente de verdade ── */
+/* ── 5. redação num cliente de verdade — SEM modelo de linguagem ──
+   A asserção que importa: o workflow no ar devolve exatamente o que
+   `redacao.js` devolve aqui. Se divergir, alguém editou o Code node à mão
+   em vez de rodar o build.py — a segunda versão que a gente não quer. */
 const alvo = linhas.find((r) => r.pode_gerar && r.cenario === "E") || linhas.find((r) => r.pode_gerar);
 console.log(`\n5) mb-touchpoint-redacao — ${alvo.client_name} (cenário ${alvo.cenario})`);
 const red = await chamar("mb-touchpoint-redacao", { contrato: alvo.payload });
@@ -117,11 +121,33 @@ if (red.status !== 200) {
 } else if (red.j.ok === false) {
   console.log("   guarda de saída barrou:", red.j.erro, JSON.stringify(red.j).slice(0, 300));
 } else {
-  console.log(`   modelo: ${red.j.modelo} | uso:`, red.j.uso);
+  const local = redigir(alvo.payload);
+  const bate = ["como_foi", "proximo_passo", "pedido_cliente"].every((k) => red.j[k] === local[k]);
+  console.log(`   motor: ${red.j.motor} | custo_api: ${red.j.custo_api} | igual ao fonte: ${bate ? "sim" : "NÃO"}`);
+  if (!bate)
+    for (const k of ["como_foi", "proximo_passo", "pedido_cliente"])
+      if (red.j[k] !== local[k]) console.log(`   ✗ ${k}\n     no ar: ${red.j[k]}\n     fonte: ${local[k]}`);
   console.log(`   avisos:`, JSON.stringify(red.j.avisos));
+  console.log(`   lacunas:`, (red.j.lacunas || []).map((l) => l.id).join(", ") || "nenhuma");
   console.log(`\n   como_foi      : ${red.j.como_foi}`);
   console.log(`   proximo_passo : ${red.j.proximo_passo}`);
   console.log(`   pedido_cliente: ${red.j.pedido_cliente}`);
+}
+
+/* ── 5b. um cliente COM lacuna: responder pela lista tem de fechar o bloco ── */
+const comLacuna = linhas.find((r) => r.pode_gerar && r.cenario === "F");
+if (comLacuna) {
+  const l1 = await chamar("mb-touchpoint-redacao", { contrato: comLacuna.payload });
+  const lac = (l1.j && l1.j.lacunas) || [];
+  console.log(`\n5b) lacuna — ${comLacuna.client_name}: ${lac.length} pergunta(s), ${(lac[0]?.opcoes || []).length} opções`);
+  if (lac.length) {
+    const escolhas = { [lac[0].id]: lac[0].opcoes[0].valor };
+    const l2 = await chamar("mb-touchpoint-redacao", { contrato: comLacuna.payload, escolhas });
+    const sobrou = (l2.j.avisos?.pendencias || []).length;
+    console.log(`   escolhendo "${lac[0].opcoes[0].rotulo}" -> ${sobrou ? "AINDA TEM MARCADOR" : "bloco fechado"}`);
+    console.log(`   como_foi      : ${l2.j.como_foi}`);
+    console.log(`   proximo_passo : ${l2.j.proximo_passo}`);
+  }
 }
 
 /* ── 6. envio: dry-run, tem de recusar publicar ── */
