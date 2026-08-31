@@ -1,0 +1,11 @@
+# Os workflows gerados carregam a service_role do Supabase e o token do
+# ClickUp em texto, no node Config. Eles são artefato de build: rode
+# `python n8n/build.py` para gerá-los na sua máquina.
+n8n/*.json
+
+# Saídas do contrato: nome, investimento e leads de cliente real.
+src/saida_*.json
+gabarito_*.json
+
+__pycache__/
+*.pyc

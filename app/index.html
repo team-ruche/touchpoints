@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TouchPoints — banca de teste</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* ===================================================================
+   Paleta e tipografia vindas do próprio Ruche OS (src/styles.css e
+   pages/mb/central/ui.tsx). A banca não inventa identidade: ela mostra
+   como a tela vai parecer dentro do sistema.
+   =================================================================== */
+:root {
+  --ground:#EAE7E1; --panel:#FBF8F0; --panel-2:#F3EFE5;
+  --ink:#1A1A1A; --ink-2:#45413A; --tertiary:#747068;
+  --line:rgba(0,0,0,.09); --line-soft:rgba(0,0,0,.05);
+  --gold:#E0A500; --gold-soft:rgba(244,206,74,.22);
+  --critical:#B3261E; --critical-bg:rgba(179,38,30,.07); --critical-bd:rgba(179,38,30,.22);
+  --warning:#8A5A00;  --warning-bg:rgba(201,162,39,.12); --warning-bd:rgba(201,162,39,.28);
+  --positive:#2F6B2F; --positive-bg:rgba(47,107,47,.09); --positive-bd:rgba(47,107,47,.22);
+  --info:#3A5A80;     --info-bg:rgba(58,90,128,.09);     --info-bd:rgba(58,90,128,.22);
+  --neutral:#6B6660;  --neutral-bg:rgba(107,102,96,.07); --neutral-bd:rgba(107,102,96,.20);
+  --shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 24px -12px rgba(0,0,0,.18);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --ground:#201C15; --panel:#2B261C; --panel-2:#332D22;
+  --ink:#F2EDE2; --ink-2:#D6CFC0; --tertiary:#A9A192;
+  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
+  --gold:#F4CE4A; --gold-soft:rgba(244,206,74,.14);
+  --critical:#F2938C; --critical-bg:rgba(242,147,140,.10); --critical-bd:rgba(242,147,140,.26);
+  --warning:#E8C26A;  --warning-bg:rgba(232,194,106,.10);  --warning-bd:rgba(232,194,106,.26);
+  --positive:#93C98F; --positive-bg:rgba(147,201,143,.10); --positive-bd:rgba(147,201,143,.26);
+  --info:#9DBBDD;     --info-bg:rgba(157,187,221,.10);     --info-bd:rgba(157,187,221,.26);
+  --neutral:#B0A99E;  --neutral-bg:rgba(176,169,158,.08);  --neutral-bd:rgba(176,169,158,.22);
+  --shadow:0 1px 2px rgba(0,0,0,.30), 0 10px 28px -14px rgba(0,0,0,.60);
+} }
+:root[data-theme="dark"] {
+  --ground:#201C15; --panel:#2B261C; --panel-2:#332D22;
+  --ink:#F2EDE2; --ink-2:#D6CFC0; --tertiary:#A9A192;
+  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
+  --gold:#F4CE4A; --gold-soft:rgba(244,206,74,.14);
+  --critical:#F2938C; --critical-bg:rgba(242,147,140,.10); --critical-bd:rgba(242,147,140,.26);
+  --warning:#E8C26A;  --warning-bg:rgba(232,194,106,.10);  --warning-bd:rgba(232,194,106,.26);
+  --positive:#93C98F; --positive-bg:rgba(147,201,143,.10); --positive-bd:rgba(147,201,143,.26);
+  --info:#9DBBDD;     --info-bg:rgba(157,187,221,.10);     --info-bd:rgba(157,187,221,.26);
+  --neutral:#B0A99E;  --neutral-bg:rgba(176,169,158,.08);  --neutral-bd:rgba(176,169,158,.22);
+  --shadow:0 1px 2px rgba(0,0,0,.30), 0 10px 28px -14px rgba(0,0,0,.60);
+}
+
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+body::before {
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:radial-gradient(ellipse 55% 40% at 100% 0%, var(--gold-soft) 0%, transparent 62%);
+}
+.wrap { position:relative; z-index:1; max-width:1400px; margin:0 auto; padding:24px 20px 72px; }
+.mono { font-family:"IBM Plex Mono", ui-monospace, monospace; font-variant-numeric:tabular-nums; }
+
+.masthead { display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px; }
+h1 { font-size:26px; font-weight:600; letter-spacing:-.015em; margin:0; }
+.sub { color:var(--tertiary); font-size:13px; margin:6px 0 0; max-width:74ch; }
+.eyebrow { font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--gold); font-weight:600; }
+.aviso { margin:16px 0 18px; padding:10px 14px; border-radius:10px; font-size:12.5px;
+  background:var(--warning-bg); border:1px solid var(--warning-bd); color:var(--ink-2); }
+.aviso b { color:var(--warning); }
+
+button {
+  border:1px solid var(--line); background:var(--panel-2); color:var(--ink);
+  font:inherit; font-size:12.5px; padding:5px 11px; border-radius:8px; cursor:pointer;
+}
+button:hover { border-color:var(--gold); }
+button[disabled] { opacity:.45; cursor:not-allowed; }
+button.ghost { background:transparent; color:var(--tertiary); }
+button.primary { background:var(--gold); border-color:var(--gold); color:#1A1A1A; font-weight:600; }
+input[type=text] {
+  font:inherit; font-size:12.5px; padding:5px 9px; border-radius:8px;
+  border:1px solid var(--line); background:var(--panel-2); color:var(--ink); width:100%;
+}
+
+.bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 12px;
+  border-radius:12px; background:var(--panel); border:1px solid var(--line-soft);
+  box-shadow:var(--shadow); margin-bottom:14px; }
+.weekpill { display:inline-flex; align-items:center; gap:8px; padding:4px 10px; border-radius:8px;
+  background:var(--panel-2); border:1px solid var(--line-soft);
+  font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500; }
+.hint { color:var(--tertiary); font-size:11.5px; margin-left:auto; text-align:right; }
+
+.strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(112px,1fr)); gap:8px; margin-bottom:16px; }
+.tile { padding:9px 12px; border-radius:10px; background:var(--panel);
+  border:1px solid var(--line-soft); text-align:left; }
+.tile .k { font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--tertiary); }
+.tile .v { font-size:22px; font-weight:600; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin-top:1px; }
+.tile.sem { cursor:pointer; }
+.tile.sem[aria-pressed="true"] { outline:2px solid var(--gold); outline-offset:-2px; }
+.tile.vermelho { background:var(--critical-bg); border-color:var(--critical-bd); }
+.tile.vermelho .k, .tile.vermelho .v { color:var(--critical); }
+.tile.laranja { background:var(--neutral-bg); border-color:var(--neutral-bd); }
+.tile.laranja .k, .tile.laranja .v { color:var(--neutral); }
+.tile.amarelo { background:var(--warning-bg); border-color:var(--warning-bd); }
+.tile.amarelo .k, .tile.amarelo .v { color:var(--warning); }
+.tile.verde { background:var(--positive-bg); border-color:var(--positive-bd); }
+.tile.verde .k, .tile.verde .v { color:var(--positive); }
+
+.panes { display:grid; grid-template-columns:316px minmax(0,1fr); gap:14px; align-items:start; }
+@media (max-width:940px) { .panes { grid-template-columns:1fr; } }
+.pane { background:var(--panel); border:1px solid var(--line-soft); border-radius:12px; box-shadow:var(--shadow); }
+
+.list { padding:6px; max-height:74vh; overflow:auto; }
+.list-head { padding:8px 10px 4px; font-size:11px; color:var(--tertiary); }
+.row { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:7px 9px;
+  border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; }
+.row:hover { background:var(--panel-2); }
+.row[aria-current="true"] { background:var(--panel-2); box-shadow:inset 2px 0 0 var(--gold); font-weight:500; }
+.dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+.dot.vermelho { background:var(--critical); } .dot.laranja { background:var(--neutral); }
+.dot.amarelo { background:var(--warning); }   .dot.verde { background:var(--positive); }
+.row .nm { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row .cen { font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:var(--tertiary); flex:0 0 auto; }
+
+.card { padding:18px 20px 20px; }
+.chips { display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-bottom:4px; }
+.cname { font-size:17px; font-weight:600; letter-spacing:-.01em; margin-right:4px; }
+.chip { display:inline-flex; align-items:center; gap:5px; padding:2.5px 9px; border-radius:999px;
+  font-size:11px; font-weight:500; border:1px solid var(--neutral-bd);
+  background:var(--neutral-bg); color:var(--neutral); }
+.chip.critical { background:var(--critical-bg); border-color:var(--critical-bd); color:var(--critical); }
+.chip.warning  { background:var(--warning-bg);  border-color:var(--warning-bd);  color:var(--warning); }
+.chip.positive { background:var(--positive-bg); border-color:var(--positive-bd); color:var(--positive); }
+.chip.info     { background:var(--info-bg);     border-color:var(--info-bd);     color:var(--info); }
+.meta { color:var(--tertiary); font-size:11.5px; }
+
+.sec { margin-top:18px; }
+.sec > h3 { font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--tertiary); font-weight:600; margin:0 0 8px; }
+.nums { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:7px; }
+.num { padding:8px 11px; border-radius:9px; background:var(--panel-2); border:1px solid var(--line-soft); cursor:help; }
+.num .k { font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--tertiary); display:flex; align-items:center; gap:4px; }
+.num .k::after { content:"ⓘ"; opacity:.38; font-size:9px; }
+.num .v { font-size:17px; font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+
+.callout { padding:10px 12px; border-radius:10px; font-size:12.5px; }
+.callout.critical { background:var(--critical-bg); border:1px solid var(--critical-bd); }
+.callout.critical b { color:var(--critical); }
+.callout ul { margin:6px 0 0; padding-left:18px; }
+.mesbox { padding:10px 13px; border-radius:10px; background:var(--panel-2);
+  border:1px solid var(--line-soft); display:flex; flex-wrap:wrap; gap:6px 22px; align-items:baseline; }
+.mesbox .lbl { font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--tertiary); width:100%; }
+.mesbox b { font-variant-numeric:tabular-nums; }
+
+.regua { padding:11px 13px; border-radius:10px; font-size:12.5px; }
+.regua .t { font-weight:600; margin-bottom:5px; }
+.regua .l { display:grid; grid-template-columns:auto 1fr; gap:3px 8px; margin:0; }
+.regua .l dt { font-weight:600; font-size:11.5px; white-space:nowrap; }
+.regua .l dd { margin:0; color:var(--ink-2); }
+.regua ol { margin:9px 0 0; padding-left:18px; font-size:11.5px; line-height:1.45; color:var(--ink-2); }
+
+.field { margin-bottom:11px; }
+.field .fh { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:4px; }
+.field .fl { font-size:12px; font-weight:600; }
+.field .fhint { font-size:11px; color:var(--tertiary); }
+.box, textarea.ed { width:100%; padding:9px 12px; border-radius:9px; background:var(--panel-2);
+  border:1px solid var(--line-soft); font-family:inherit; font-size:13px; line-height:1.55;
+  color:var(--ink-2); resize:vertical; }
+textarea.ed:focus { outline:2px solid var(--gold); outline-offset:-2px; }
+.nota { margin-top:8px; padding:9px 12px; border-radius:9px; font-size:12px;
+  background:var(--info-bg); border:1px solid var(--info-bd); color:var(--ink-2); }
+.nota b { color:var(--info); }
+
+.msg { white-space:pre-wrap; font-family:"IBM Plex Mono",monospace; font-size:12px; line-height:1.62;
+  padding:13px 15px; border-radius:10px; background:var(--panel-2);
+  border:1px solid var(--line-soft); max-height:460px; overflow:auto; }
+
+.check { display:grid; gap:3px; font-size:11.5px; }
+.check div { display:flex; gap:7px; align-items:flex-start; }
+.check .ok { color:var(--positive); font-family:"IBM Plex Mono",monospace; }
+.check .no { color:var(--warning); font-family:"IBM Plex Mono",monospace; }
+.check .txt.done { color:var(--tertiary); }
+
+dialog { border:1px solid var(--line); border-radius:14px; background:var(--panel); color:var(--ink);
+  max-width:min(900px,92vw); width:100%; padding:0; box-shadow:var(--shadow); }
+dialog::backdrop { background:rgba(0,0,0,.45); }
+dialog .dh { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--line-soft); }
+dialog .dh h2 { font-size:15px; margin:0; font-weight:600; }
+dialog .db { padding:16px 18px; max-height:70vh; overflow:auto; }
+dialog .df { padding:12px 18px; border-top:1px solid var(--line-soft); display:flex; gap:8px; justify-content:flex-end; }
+
+.toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:50;
+  padding:10px 16px; border-radius:10px; font-size:12.5px; max-width:min(680px,90vw);
+  background:var(--warning-bg); border:1px solid var(--warning-bd); color:var(--ink); box-shadow:var(--shadow); }
+.toast.critical { background:var(--critical-bg); border-color:var(--critical-bd); }
+.toast.info { background:var(--info-bg); border-color:var(--info-bd); }
+[hidden] { display:none !important; }
+@media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="masthead">
+      <div>
+        <div class="eyebrow">Ruche OS · Media Buyer · banca de teste</div>
+        <h1>TouchPoints</h1>
+      </div>
+    </div>
+    <p class="sub">
+      Os números são <b>reais</b> e vêm do Supabase a cada clique — o mesmo cálculo de
+      <span class="mono">fn_mb_touchpoint_week</span>, rodando no n8n porque a função ainda não
+      foi aplicada no banco. Nada aqui escreve no Ruche OS.
+    </p>
+    <div class="aviso">
+      <b>O que muda para quem recebe.</b> O campo <span class="mono">🎯 Appointments Booked</span> nunca
+      trouxe agendamento: ele imprimia <span class="mono">clients.appointment_quantity</span>, a meta
+      MENSAL contratada. Aqui, <span class="mono">📅 Agendamentos na semana</span> é agendamento de verdade
+      (<span class="mono">v_appointment_effective</span>, pela data da marcação).
+      <b>O rascunho fica só neste navegador</b> — exporte antes de trocar de máquina.
+    </div>
+  </header>
+
+  <div class="bar">
+    <button id="prev" title="semana anterior">◀</button>
+    <span class="weekpill"><span id="weeklabel">—</span></span>
+    <button id="next" title="próxima semana">▶</button>
+    <span class="mono meta" id="weekiso"></span>
+    <button id="recarregar">Recarregar</button>
+    <input type="text" id="f-gestor" placeholder="filtrar por gestor" style="width:170px">
+    <button id="btn-todos">Escrever a semana toda</button>
+    <button id="btn-envio" class="primary">Montar envio (dry-run)</button>
+    <button id="btn-export" class="ghost">Exportar rascunhos</button>
+    <button id="btn-cfg" class="ghost">Ajustes</button>
+    <span class="hint" id="contagem"></span>
+  </div>
+
+  <div class="strip" id="strip"></div>
+
+  <div class="panes">
+    <div class="pane">
+      <div class="list-head" id="listhead"></div>
+      <div class="list" id="list" role="listbox" aria-label="Clientes da semana"></div>
+    </div>
+    <div class="pane"><div class="card" id="card"></div></div>
+  </div>
+</div>
+
+<dialog id="dlg-envio">
+  <div class="dh">
+    <h2>Prévia do envio — uma mensagem por gestor</h2>
+    <button class="ghost" data-fechar style="margin-left:auto">Fechar</button>
+  </div>
+  <div class="db">
+    <div class="nota" style="margin-bottom:14px">
+      <b>Isto é dry-run.</b> O n8n montou a mensagem exata e <b>não</b> publicou no canal
+      <span class="mono">Touchpoints</span>. Para publicar de verdade são dois cadeados: a tela precisa
+      mandar <span class="mono">confirmar: true</span> <em>e</em> o workflow precisa ter
+      <span class="mono">envio_real_liberado: true</span> no node Config — que hoje está
+      <span class="mono">false</span>.
+    </div>
+    <div id="envio-corpo"></div>
+  </div>
+</dialog>
+
+<dialog id="dlg-cfg">
+  <div class="dh"><h2>Ajustes</h2></div>
+  <div class="db">
+    <div class="field">
+      <div class="fh"><span class="fl">Base dos webhooks do n8n</span></div>
+      <input type="text" id="in-base">
+      <div class="meta" style="margin-top:4px">Sem barra no fim. Ex.: https://webhook.ruchedigital.online/webhook</div>
+    </div>
+    <div class="field">
+      <div class="fh"><span class="fl">Token compartilhado</span></div>
+      <input type="text" id="in-token">
+      <div class="meta" style="margin-top:4px">
+        Tem de bater com o campo <span class="mono">token</span> do node Config dos três workflows.
+        Não é autenticação forte — ele viaja no bundle desta página.
+      </div>
+    </div>
+  </div>
+  <div class="df">
+    <button class="ghost" data-fechar>Cancelar</button>
+    <button class="primary" id="cfg-salvar">Salvar e recarregar</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+<script src="./app.js"></script>
+</body>
+</html>
