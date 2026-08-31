@@ -146,13 +146,19 @@ sozinho: precisa de `--com-ia`, de propósito.
 
 ### 2. Abrir a tela
 
+**No ar:** https://team-ruche.github.io/touchpoints/ — GitHub Pages servindo `docs/` do
+branch `main`. Na primeira abertura ela pede o token dos webhooks, que fica no
+`localStorage` do navegador; sem ele a página não lê nada.
+
+**Local**, se preferir:
+
 ```bash
-cd app
+cd docs
 python -m http.server 8080
 # abre http://localhost:8080
 ```
 
-A pasta `app/` é estática (dois arquivos, sem build) — serve em qualquer lugar. O botão
+A pasta `docs/` é estática (dois arquivos, sem build) — serve em qualquer lugar. O botão
 **Ajustes** troca a base dos webhooks e o token sem republicar nada.
 
 ### 3. Testar
@@ -269,8 +275,8 @@ live/
   src/testar_app.mjs     exercita a mensagem final nos 44 clientes, sem navegador
   src/testar_webhooks.mjs  ponta a ponta nos webhooks publicados
   n8n/build.py           monta e publica os workflows        ⚠️ gera JSON com chave
-  app/index.html         a tela
-  app/app.js             estado, régua dos cenários, léxico, mensagem final
+  docs/index.html        a tela — publicada pelo GitHub Pages
+  docs/app.js            estado, régua dos cenários, léxico, mensagem final
 ```
 
 `src/contrato.js` e `src/redacao.js` são as fontes únicas: `build.py` cola cada um dentro

@@ -41,6 +41,15 @@ quando) é protocolo do cenário mais data real, e por isso fecha sozinho.
 Na semana de 17 a 23/08, com 44 clientes: **33 blocos publicáveis sem ninguém digitar**,
 11 esperando uma resposta de lista — e as 11 fecham.
 
+## A tela
+
+**https://team-ruche.github.io/touchpoints/** — servida pelo GitHub Pages a partir de
+`docs/` no branch `main`. Não há credencial no bundle: na primeira abertura ela pede o
+token dos webhooks e guarda no `localStorage` do seu navegador. Sem o token, a página não
+lê nada.
+
+Para rodar local em vez disso: `cd docs && python -m http.server 8080`.
+
 ## Rodar
 
 ```bash
@@ -57,7 +66,7 @@ python n8n/build.py                     # só gera os .json (não versionados)
 python n8n/build.py --publicar          # cria/atualiza e ativa no n8n
 
 # 3. abrir a tela
-cd app && python -m http.server 8080
+cd docs && python -m http.server 8080
 # cole o token em "Ajustes" na primeira abertura
 ```
 
