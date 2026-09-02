@@ -63,6 +63,22 @@ SUPABASE_KEY = _tabela("SERVICE_ROLE_KEY", "SUPABASE_SERVICE_ROLE_KEY")
 ANTHROPIC_KEY = _env("ANTHROPIC_API_KEY")
 CLICKUP_TOKEN = _env("CLICKUP_TOKEN")
 CLICKUP_CANAL = _env("CLICKUP_CHANNEL_ID")
+
+# As CS que recebem o touchpoint na conversa privada do ClickUp.
+#
+# O id do DM é resolvido AQUI, nunca na tela: a tela é uma página pública e um
+# id de conversa privada no bundle é um convite a mandar o touchpoint para a
+# pessoa errada por engano. `user_id` fica junto para quem precisar refazer o
+# mapa — o DM é entre a CS e a conta que assina CLICKUP_TOKEN (hoje a do
+# Patrick), então trocar o token exige refazer estes dois ids.
+#
+#   curl -H "Authorization: $CLICKUP_TOKEN" \
+#     https://api.clickup.com/api/v3/workspaces/9007039079/chat/channels
+#   # e, para cada DM, .../chat/channels/<id>/members
+CS_DESTINOS = {
+    "eduarda": {"nome": "Eduarda Zancanella", "user_id": "88305534", "channel_id": "8cdt0k7-22714"},
+    "amanda": {"nome": "Amanda Blaszczyk", "user_id": "88451364", "channel_id": "8cdt0k7-24774"},
+}
 _m = re.search(r'API_KEY\s*=\s*"([^"]+)"', _n)
 N8N_KEY = _m.group(1) if _m else os.environ.get("N8N_API_KEY")
 N8N_BASE = "https://workflows.ruchedigital.online/api/v1"
@@ -505,7 +521,28 @@ CODE_ENVIO = (
 const blocos  = body.blocos || [];
 const gestor  = body.gestor || 'Media Buyer';
 const periodo = body.periodo;
-const canal   = body.channel_id || cfg.clickup_canal;
+
+// DESTINO. 'canal' é o Touchpoints, que o CLIENTE lê. 'cs' é a conversa
+// privada de uma CS, que é interna. Os dois caminhos são separados de
+// propósito: o que a CS pode ler (a nota de um número corrigido à mão) não
+// pode aparecer no canal, e o id do DM é resolvido aqui — nunca pela tela,
+// que é uma página pública.
+const destino = String(body.destino || 'canal').toLowerCase() === 'cs' ? 'cs' : 'canal';
+let cs = null, cs_chave = null, canal;
+if (destino === 'cs') {
+  const mapa = typeof cfg.cs_destinos === 'string'
+    ? JSON.parse(cfg.cs_destinos || '{}')
+    : (cfg.cs_destinos || {});
+  cs_chave = String(body.cs || '').trim().toLowerCase();
+  cs = mapa[cs_chave] || null;
+  if (!cs) {
+    throw new Error('CS desconhecida: "' + (body.cs || '') + '" — conhecidas: ' + Object.keys(mapa).join(', '));
+  }
+  canal = cs.channel_id;
+  if (!canal) throw new Error('CS ' + cs_chave + ' sem channel_id no Config');
+} else {
+  canal = body.channel_id || cfg.clickup_canal;
+}
 
 if (!blocos.length) throw new Error('nada para enviar: blocos vazio');
 if (!periodo)       throw new Error('payload sem "periodo"');
@@ -521,15 +558,30 @@ for (const b of blocos) {
   if (resto) throw new Error('bloco de ' + b.cliente + ' ainda tem marcador: ' + resto[0]);
 }
 
-const partes = ['**@' + gestor + '**', '📋 **Weekly Touchpoints — ' + periodo + '**'];
+// O canal mantém o formato que ele usa há 16 semanas. O DM da CS diz, na
+// primeira linha, que aquilo é uma cópia interna do que o cliente recebe —
+// senão vira mais uma mensagem sem remetente claro na caixa de entrada dela.
+const partes = destino === 'cs'
+  ? ['🔒 **Touchpoints — ' + periodo + '**',
+     '_Cópia interna para ' + cs.nome + ' · gestor ' + gestor + ' · ' + blocos.length +
+     ' cliente(s). É o mesmo texto que vai (ou foi) para o canal Touchpoints._']
+  : ['**@' + gestor + '**', '📋 **Weekly Touchpoints — ' + periodo + '**'];
+
 for (const b of blocos) {
   partes.push('---');
   partes.push('**Cliente: ' + b.cliente + '**');
   partes.push(b.message_text);
+  // A nota de correção existe SÓ no destino interno. No canal ela seria uma
+  // conversa de bastidor publicada para o cliente.
+  if (destino === 'cs' && b.nota_interna) partes.push('> ⚠️ ' + b.nota_interna);
 }
 const conteudo = partes.join('\\n\\n');
 
-const liberado = cfg.envio_real_liberado === true || cfg.envio_real_liberado === 'true';
+// Dois freios de mão independentes: dá para derrubar o envio ao cliente sem
+// derrubar o envio interno para a CS, e vice-versa.
+const libCanal = cfg.envio_real_liberado === true || cfg.envio_real_liberado === 'true';
+const libCS    = cfg.envio_cs_liberado === true || cfg.envio_cs_liberado === 'true';
+const liberado = destino === 'cs' ? libCS : libCanal;
 const pedido   = body.confirmar === true;
 const publicar = liberado && pedido;
 
@@ -538,8 +590,12 @@ return [{ json: {
   publicar,
   dry_run: !publicar,
   motivo_dry_run: publicar ? null
-    : (!liberado ? 'envio_real_liberado=false no Config do workflow'
+    : (!liberado ? (destino === 'cs' ? 'envio_cs_liberado=false no Config do workflow'
+                                     : 'envio_real_liberado=false no Config do workflow')
                  : 'payload sem confirmar:true'),
+  destino,
+  cs: cs_chave,
+  cs_nome: cs ? cs.nome : null,
   gestor, periodo,
   week_start: body.week_start || null,
   channel_id: canal,
@@ -547,7 +603,11 @@ return [{ json: {
   client_ids: blocos.map(b => b.client_id),
   caracteres: conteudo.length,
   mensagem: conteudo,
-  payload: { content: conteudo, content_format: 'text/md' },
+  // `type` é OBRIGATÓRIO na v3 ('message' ou 'post') — faltava aqui, e como
+  // este node nunca tinha rodado (dois cadeados na frente), o 400 só apareceu
+  // quando fomos destravar. content_format 'text/md' mantém o negrito e os
+  // emojis do formato que o canal usa há 16 semanas.
+  payload: { type: 'message', content: conteudo, content_format: 'text/md' },
 } }];
 """
 )
@@ -564,6 +624,9 @@ return [{ json: {
   dry_run: false,
   gestor: m.gestor,
   periodo: m.periodo,
+  destino: m.destino,
+  cs: m.cs,
+  cs_nome: m.cs_nome,
   channel_id: m.channel_id,
   client_ids: m.client_ids,
   clickup_message_id: r.id || (r.data && r.data.id) || null,
@@ -573,7 +636,7 @@ return [{ json: {
 """
 
 WF_ENVIO = {
-    "name": "MB TouchPoint — envio ao ClickUp (live, dry-run)",
+    "name": "MB TouchPoint — envio ao ClickUp (live)",
     "settings": {"executionOrder": "v1", "saveManualExecutions": True},
     "nodes": [
         webhook("mb-touchpoint-envio", (-320, 0)),
@@ -584,8 +647,25 @@ WF_ENVIO = {
                 "clickup_canal": CLICKUP_CANAL,
                 # workspace RUCHE DIGITAL; canal 8cdt0k7-57414 = "Touchpoints"
                 "clickup_workspace": "9007039079",
-                # ── O CADEADO. Trocar para true só quando for publicar de verdade.
-                "envio_real_liberado": False,
+                # Conversa privada de cada CS. A tela manda `cs: "eduarda"`,
+                # nunca um id de canal — quem traduz é este mapa.
+                "cs_destinos": json.dumps(CS_DESTINOS, ensure_ascii=False),
+                # ── LIBERADO em 30/08/2026, a pedido, depois do teste na tela.
+                #
+                # O cadeado de servidor existia porque o primeiro cadeado
+                # (`confirmar: true`) viaja no navegador e podia ser mandado
+                # por engano. Ele não sumiu: virou humano. A tela só manda
+                # `confirmar` depois que alguém digita PUBLICAR num diálogo
+                # que mostra o canal, os gestores e quantos clientes vão — e
+                # que grita quando aquela semana já foi publicada.
+                #
+                # Trocar de volta para False derruba o envio na hora, sem
+                # mexer na tela: é o freio de mão se algo sair errado.
+                "envio_real_liberado": True,
+                # O envio para a CS é interno: não vai para cliente nenhum,
+                # e por isso a tela não exige confirmação digitada nele. O
+                # freio de mão é este, e é independente do de cima.
+                "envio_cs_liberado": True,
             },
             (-100, 0),
         ),
@@ -677,11 +757,27 @@ def publicar():
     import requests
 
     H = {"X-N8N-API-KEY": N8N_KEY, "Content-Type": "application/json"}
-    existentes = {}
+    por_nome, por_path = {}, {}
     r = requests.get(N8N_BASE + "/workflows", headers=H, params={"limit": 250}, timeout=90)
     r.raise_for_status()
     for w in r.json()["data"]:
-        existentes[w["name"]] = w["id"]
+        por_nome[w["name"]] = w["id"]
+        # Casar também pelo path do webhook: renomear um workflow não pode
+        # criar um segundo com a MESMA rota. Foi o que quase aconteceu quando
+        # o "(live, dry-run)" deixou de ser dry-run.
+        for n in w.get("nodes") or []:
+            if n.get("type") == "n8n-nodes-base.webhook":
+                p = (n.get("parameters") or {}).get("path")
+                if p:
+                    por_path[p] = w["id"]
+
+    def achar(wf):
+        wid = por_nome.get(wf["name"])
+        if wid:
+            return wid, None
+        p = wf["nodes"][0]["parameters"]["path"]
+        wid = por_path.get(p)
+        return (wid, p) if wid else (None, None)
 
     fila = TODOS + (RESERVA if "--com-ia" in sys.argv else [])
     for nome, wf in fila:
@@ -691,11 +787,11 @@ def publicar():
             "connections": wf["connections"],
             "settings": wf["settings"],
         }
-        wid = existentes.get(wf["name"])
+        wid, renomeando = achar(wf)
         if wid:
             rr = requests.put(N8N_BASE + "/workflows/" + wid, headers=H,
                               data=json.dumps(corpo), timeout=90)
-            acao = "atualizado"
+            acao = "renomeado" if renomeando else "atualizado"
         else:
             rr = requests.post(N8N_BASE + "/workflows", headers=H,
                                data=json.dumps(corpo), timeout=90)

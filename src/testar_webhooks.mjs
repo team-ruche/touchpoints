@@ -168,14 +168,50 @@ if (env.status === 200) {
   console.log(`   caracteres=${env.j.caracteres} | canal=${env.j.channel_id}`);
 } else console.log("   corpo:", env.txt.slice(0, 500));
 
-/* ── 7. o cadeado 2: mesmo com confirmar:true, tem de continuar dry-run ── */
-const forc = await chamar("mb-touchpoint-envio", {
-  gestor: "Teste", blocos: [bloco], periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
-  confirmar: true,
+/* ── 7. `confirmar: true` PUBLICA DE VERDADE desde 30/08 ──────────────────
+ *
+ * Este passo nasceu quando `envio_real_liberado` era false: mandar
+ * `confirmar: true` provava que o segundo cadeado segurava. Quando o cadeado
+ * foi liberado, o mesmo passo virou uma publicação real — e publicou, em
+ * 01/09, um "**@Teste** ... Texto de teste sem marcador" no canal que os
+ * clientes leem (apagado logo depois).
+ *
+ * A lição é a de sempre por aqui: teste que manda `confirmar` tem de dizer
+ * PARA ONDE. Sem `--ensaio <channel_id>` ele não manda nada.
+ */
+const iEnsaio = process.argv.indexOf("--ensaio");
+const canalEnsaio = iEnsaio > 0 ? process.argv[iEnsaio + 1] : null;
+if (canalEnsaio) {
+  const forc = await chamar("mb-touchpoint-envio", {
+    gestor: "Teste", blocos: [bloco], periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
+    confirmar: true, channel_id: canalEnsaio,
+  });
+  console.log(`7) confirmar:true no canal de ensaio ${canalEnsaio} -> ${forc.status} | ` +
+    `dry_run=${forc.j?.dry_run} | msg=${forc.j?.clickup_message_id || "—"}`);
+} else {
+  console.log("7) confirmar:true — PULADO de propósito.");
+  console.log("   `envio_real_liberado` está aberto: com confirmar:true isto publicaria no");
+  console.log("   canal Touchpoints, que o cliente lê. Para exercitar o POST de verdade:");
+  console.log("   node testar_webhooks.mjs 2026-08-17 --ensaio 8cdt0k7-XXXXX");
+}
+
+/* ── 7b. a rota da CS: dry-run, só para provar que o destino resolve ── */
+for (const cs of ["eduarda", "amanda"]) {
+  const r = await chamar("mb-touchpoint-envio", {
+    destino: "cs", cs, gestor: "Teste", blocos: [bloco],
+    periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
+    // sem `confirmar`: isto NÃO manda DM para ninguém
+  });
+  const j = r.j || {};
+  const separado = j.channel_id && j.channel_id !== env.j?.channel_id;
+  console.log(`7b) destino cs=${cs} -> ${r.status} | ${j.cs_nome || "?"} | canal=${j.channel_id} ` +
+    `${separado ? "(≠ canal do cliente, correto)" : "⚠ CAIU NO CANAL DO CLIENTE"} | dry_run=${j.dry_run}`);
+}
+const csRuim = await chamar("mb-touchpoint-envio", {
+  destino: "cs", cs: "fulana", gestor: "Teste", blocos: [bloco],
+  periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
 });
-console.log(`7) com confirmar:true -> ${forc.status} | dry_run=${forc.j?.dry_run} ` +
-  `${forc.j?.dry_run === true ? "(o 2º cadeado segurou, correto)" : "⚠ PUBLICOU"}`);
-console.log(`   motivo: ${forc.j?.motivo_dry_run}`);
+console.log(`7c) cs desconhecida -> ${csRuim.status} ${csRuim.status >= 400 ? "(recusada, correto)" : "⚠ ACEITOU"}`);
 
 /* ── 8. bloco com marcador tem de ser recusado pelo servidor ── */
 const marc = await chamar("mb-touchpoint-envio", {

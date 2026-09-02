@@ -7,7 +7,8 @@ Esta pasta é a mesma tela, ligada no Supabase, para você rodar qualquer semana
 redação de verdade e ver a mensagem exata que iria para o canal.
 
 **O Ruche OS não muda.** Nenhuma migration foi aplicada, nenhum arquivo do dashboard foi
-tocado, e o envio ao ClickUp nasce travado por dois cadeados.
+tocado. O envio ao ClickUp **foi liberado em 30/08** — a trava que sobrou é humana, e
+está descrita mais abaixo.
 
 ---
 
@@ -72,6 +73,91 @@ Semana de 17 a 23/08, os 44 clientes:
 
 Na semana de 10 a 16/08 são 15 pendentes, pela mesma razão: 15 clientes sem veiculação.
 
+
+---
+
+## 01/09 — corrigir número, e mandar para o CS
+
+Duas coisas entraram numa tela cuja regra era **"nenhum número nasce aqui"**.
+As duas são exceções declaradas, e cada uma tem um teste que a segura.
+
+### Corrigir número quando o banco está errado
+
+O botão **Corrigir números**, no cartão do cliente, abre a lista do que dá para
+consertar: investimento e leads por plataforma, agendamento da semana, o mês
+inteiro, a meta (e a **origem** dela), a semana anterior e o cenário.
+
+O caso que obrigou isso a existir já está na pesquisa: **#526 GTF tem
+`account_id_meta` cadastrado e nunca teve uma linha em `ad_insights`** — 23
+agendamentos de mídia em agosto e "sem investimento no período" no bloco. O
+banco está errado, e mandar o erro para o cliente é pior do que corrigir à mão.
+
+O que a correção faz:
+
+| | |
+|---|---|
+| Refaz o que é derivado | CPL **por soma** (nunca média de coluna), totais, variação contra a semana anterior, ritmo contra o benchmark |
+| Cria a plataforma que não existe | é o caso do investimento que nunca chegou ao banco |
+| Reescreve o texto na hora | se a régua escreveu, reescreve sozinho; se **você** escreveu, ela não sobrescreve — avisa |
+| Exige motivo | sem motivo não salva. O motivo vai para o CS e para o CSV, nunca para o cliente |
+| Aparece em todo lugar | `✎` no número, `≠` na lista, chip no cartão, contador na faixa, bloco na prévia do envio |
+
+O que ela **não** faz, de propósito:
+
+- **não escreve no Supabase.** O cadastro continua errado. É por isso que a
+  prévia do envio tem **Baixar CSV para corrigir o cadastro**: sem alguém
+  arrumar a origem, a mesma correção volta na semana seguinte;
+- **não desbloqueia bloco bloqueado** (D6 e falta de gestor continuam valendo);
+- **não reclassifica o cenário sozinha.** A régua de classificação mora no
+  contrato, não na tela — então o cenário está lá na lista, para você escolher.
+
+A guarda que importa é a última: corrigir o número do cabeçalho e deixar o
+parágrafo citando o antigo seria **exatamente** o defeito que originou o
+projeto. O checklist ganhou um item que procura cada número de antes da
+correção dentro do texto, e o cartão abre um alerta vermelho quando acha.
+
+### Enviar para CS
+
+O botão **Enviar para CS** (na barra e no rodapé da prévia) manda o touchpoint
+para a **conversa privada** de uma das duas CS no ClickUp:
+
+| CS | conversa |
+|---|---|
+| Eduarda Zancanella | `8cdt0k7-22714` |
+| Amanda Blaszczyk | `8cdt0k7-24774` |
+
+Dá para mandar a semana toda ou só o cliente aberto, para uma CS ou para as
+duas. É uma mensagem por gestor, igual ao canal — o mesmo texto que o cliente
+recebe, com duas diferenças que só existem no destino interno:
+
+1. o cabeçalho diz `🔒 Touchpoints` e nomeia a CS, para não virar mais uma
+   mensagem sem remetente claro na caixa de entrada dela;
+2. o cliente que teve número corrigido vem com a **nota interna** — o de→para
+   e o motivo. No canal do cliente essa nota não existe.
+
+**Quem resolve o id da conversa é o node Config do workflow**, nunca a tela: a
+tela é uma página pública, e um id de conversa privada no bundle é um convite a
+mandar o touchpoint para a pessoa errada. A tela manda `cs: "eduarda"`.
+
+⚠️ **A mensagem chega pela conta que assina o `CLICKUP_TOKEN` do n8n — hoje a do
+Patrick.** Para a CS, é um DM do Patrick. Trocar o token exige refazer os dois
+ids de conversa (`CS_DESTINOS`, em `n8n/build.py`), porque um DM é entre duas
+pessoas específicas.
+
+O envio ao CS **não conta como semana publicada**: são registros separados, e a
+barra mostra os dois. Ele tem freio de mão próprio (`envio_cs_liberado`), então
+dá para derrubar o envio ao cliente sem derrubar o interno, e vice-versa.
+
+### A trava que impede o pior cenário desta mudança
+
+Se a tela nova subir e o workflow **não**, o n8n antigo ignora `destino` e cai
+no canal padrão — que é o do cliente — com o `confirmar: true` junto. Seria uma
+cópia interna publicada para o cliente.
+
+Por isso `enviarParaCS` faz um dry-run antes e só continua se a resposta voltar
+com `destino: "cs"`, o nome da CS e um `channel_id` resolvido. Workflow antigo
+não devolve nada disso, e a tela recusa o envio dizendo qual comando falta.
+
 ---
 
 ## Como funciona
@@ -133,7 +219,7 @@ python build.py --publicar --com-ia   # idem + a rota de reserva que gasta API
 |---|---|---|---|
 | MB TouchPoint — semana (live, somente leitura) | `JRzjbVbWGdgX6CcG` | `mb-touchpoint-week` | ✅ 200, 44/44 |
 | MB TouchPoint — redação (live) | `5lbJMgNZ9tj0gigY` | `mb-touchpoint-redacao` | ⚠️ **precisa republicar** — os nós mudaram |
-| MB TouchPoint — envio ao ClickUp (live, dry-run) | `svVZhxutLSPXxDpJ` | `mb-touchpoint-envio` | ✅ dry-run, cadeados seguram |
+| MB TouchPoint — envio ao ClickUp (live) | `svVZhxutLSPXxDpJ` | `mb-touchpoint-envio` | ⚠️ **precisa republicar** — ganhou o destino `cs` |
 | MB TouchPoint — redação por IA (live, reserva) | — | `mb-touchpoint-redacao-ia` | gravado em disco, **não publicado** |
 
 A redação mantém **nome e path**, então republicar atualiza o workflow que já existe e a
@@ -146,19 +232,20 @@ sozinho: precisa de `--com-ia`, de propósito.
 
 ### 2. Abrir a tela
 
-**No ar:** https://team-ruche.github.io/touchpoints/ — GitHub Pages servindo `docs/` do
-branch `main`. Na primeira abertura ela pede o token dos webhooks, que fica no
-`localStorage` do navegador; sem ele a página não lê nada.
+**No ar:** https://team-ruche.github.io/touchpoints/ — GitHub Pages, servindo os mesmos
+dois arquivos desta pasta (no repo eles moram em `docs/`, que é o único subdiretório que o
+Pages serve a partir do branch principal). Na primeira abertura ela pede o token dos
+webhooks, que fica no `localStorage` do navegador; sem ele a página carrega e não lê nada.
 
 **Local**, se preferir:
 
 ```bash
-cd docs
+cd app
 python -m http.server 8080
 # abre http://localhost:8080
 ```
 
-A pasta `docs/` é estática (dois arquivos, sem build) — serve em qualquer lugar. O botão
+A pasta é estática (dois arquivos, sem build) — serve em qualquer lugar. O botão
 **Ajustes** troca a base dos webhooks e o token sem republicar nada.
 
 ### 3. Testar
@@ -168,7 +255,11 @@ A pasta `docs/` é estática (dois arquivos, sem build) — serve em qualquer lu
 3. Clique em **Escrever a semana toda**. Devem sair 33 blocos fechados e 11 esperando uma
    resposta.
 4. Abra um dos 11, escolha o motivo da pausa na lista e veja o texto fechar sozinho.
-5. Clique em **Montar envio (dry-run)** e leia a mensagem exata que iria ao canal.
+5. Busque `202`, depois `#202`, depois `flooring` — os três acham a mesma linha.
+6. Filtre por cenário `F` e por gestor ao mesmo tempo: é interseção, não união.
+7. Escolha uma data qualquer no calendário — cai na segunda daquela semana.
+8. Clique em **Revisar e enviar** e leia a mensagem exata. Publicar é o botão do rodapé, e
+   ele pede confirmação digitada.
 
 ---
 
@@ -180,6 +271,8 @@ node testar_redacao.mjs            # a redação nos 88 blocos das 2 semanas
 node testar_redacao.mjs --amostra  # imprime um texto por cenário
 node simular_redacao.mjs 2026-08-17  # roda o Code node GERADO, sem Intl no escopo
 node testar_app.mjs                # a mensagem final, montada, nos 44 clientes
+node testar_filtros.mjs            # busca, calendário, filtros e registro de envio
+node testar_correcao.mjs         # correção de número e o envio para a CS
 node validar.mjs 2026-08-17 ../gabarito_2026-08-17.json   # o contrato vs. o Python
 node simular_n8n.mjs 2026-08-17 ../gabarito_2026-08-17.json
 node testar_webhooks.mjs 2026-08-17 ../gabarito_2026-08-17.json  # ponta a ponta
@@ -203,27 +296,69 @@ deploy: a simulação passava no Node local e o workflow quebrava no ar.
 
 `testar_webhooks.mjs` confere, além do contrato: o preflight de CORS, que o webhook sem
 token é recusado, que uma `week_start` que não é segunda é recusada, que o envio devolve
-dry-run mesmo com `confirmar: true` (o 2º cadeado), e que um bloco com `[…]` é barrado no
-servidor. **Ele só passa depois de republicar a redação** — hoje ele bate no workflow
-antigo, que ainda chama a Anthropic.
+prévia quando falta `confirmar`, e que um bloco com `[…]` é barrado no servidor.
+
+`testar_correcao.mjs` cobre as duas exceções novas. As três asserções que
+importam: o número corrigido chega à mensagem final **e** ao texto da régua; a
+nota interna aparece no DM da CS e **não** aparece no bloco do canal; e o Code
+node gerado resolve `cs: "eduarda"` para uma conversa que **não** é o canal do
+cliente — recusando CS desconhecida, marcador `[…]` e envio sem `confirmar`.
+
+`testar_filtros.mjs` exercita busca, calendário, filtros, estado do bloco e o registro de
+envio contra os 44 clientes reais — inclusive a regra que mais importa ali: **o filtro da
+tela não pode mexer no que vai ser enviado.** Filtrar é para revisar; enviar é sobre a
+semana inteira. Se o filtro mandasse no envio, uma busca esquecida na caixa faria um
+cliente sumir do envio sem ninguém perceber.
 
 `testar_app.mjs` já achou **um bug real** no `model.ts` da Fase 4 — a linha do acumulado
 do mês escrevia "de N contratados" também para quem não tem meta contratada, o que
 atingiria 17 dos 44 blocos desta semana. Corrigido aqui; o diff para o dashboard está em
 `PATCH-model-ts.md` e precisa entrar antes de a tela ir para o Ruche OS.
 
-## Os dois cadeados do envio
+## O envio real — liberado em 30/08, e o que ficou no lugar do cadeado
 
 O passo final publica no canal `8cdt0k7-57414` (**Touchpoints**), que é o canal real dos
-clientes. Para publicar de verdade é preciso que **as duas** condições sejam verdadeiras:
+clientes. Até 30/08 ele estava travado por dois cadeados de máquina. Agora publica.
 
-1. o payload trazer `confirmar: true` — a tela **nunca** manda isso hoje;
-2. o node **Config** do workflow `mb-touchpoint-envio` ter `envio_real_liberado: true` —
-   hoje está `false`.
+O cadeado de servidor (`envio_real_liberado`) existia porque o outro (`confirmar: true`)
+viaja no navegador e podia ser mandado por engano. Ele não sumiu — **virou humano**:
 
-O segundo cadeado existe porque o primeiro viaja no navegador. Faltando qualquer um, o
-workflow devolve a prévia e não chama o ClickUp. O workflow também recusa qualquer bloco
-que ainda contenha `[…]`: a tela já barra, mas o servidor não confia na tela.
+1. **A prévia continua sendo o caminho.** "Revisar e enviar" pede o dry-run de cada gestor
+   e mostra a mensagem inteira. Publicar é um segundo botão, no rodapé daquele diálogo.
+2. **Confirmação digitada.** O diálogo de publicar mostra o canal, os gestores e quantos
+   clientes vão, e só habilita o botão depois de alguém digitar `PUBLICAR`.
+3. **Registro de "já publiquei".** A tela grava o que foi publicado por semana e por
+   gestor, mostra isso na barra e **grita** no diálogo se você for reenviar. Existe porque
+   a pesquisa achou reenvio do mesmo bloco em **6 das 16 semanas** do canal — é o erro mais
+   comum aqui, e o único que o cliente enxerga.
+4. **Canal de ensaio.** Em **Ajustes**, um id de canal opcional. Com ele preenchido, o
+   diálogo de publicar nasce marcado para o ensaio: a mensagem sai de verdade, mas naquele
+   canal. É onde dá para apertar o botão inteiro sem cliente vendo — e o ensaio **não**
+   conta como semana publicada.
+
+O servidor continua recusando qualquer bloco que contenha `[…]`: a tela já barra, mas o
+servidor não confia na tela.
+
+**Freio de mão:** trocar `envio_real_liberado` para `False` em `build.py` e republicar
+derruba o envio na hora, sem mexer na tela.
+
+⚠️ **O que isso muda no risco.** Com o envio liberado, quem tiver a URL da tela **e** o
+token consegue publicar no canal dos clientes. O token não está no bundle (fica no
+`localStorage` de quem digitou), mas ele passou a ser a única barreira de máquina. Trocar
+é um comando: novo `TP_TOKEN` no `config.env` → `python n8n/build.py --publicar` → colar o
+novo em Ajustes.
+
+### Uma coisa que nunca rodou até 30/08
+
+O node que chama o ClickUp estava atrás dos dois cadeados desde que foi escrito — ou seja,
+**nunca tinha executado**. Ao destravar, a conferência contra a documentação da API v3
+achou o motivo pelo qual o primeiro envio de verdade teria falhado: o corpo exige `type`
+(`"message"` ou `"post"`), e o workflow mandava só `content` e `content_format`.
+Corrigido. O que foi verificado de fato, só lendo: o token responde, o workspace
+`9007039079` existe, o canal `8cdt0k7-57414` é o **Touchpoints** e dá para ler as
+mensagens dele. **O POST em si continua sem ter rodado** — é para isso que serve o canal
+de ensaio: crie um canal qualquer no ClickUp, cole o id em Ajustes e publique nele uma vez
+antes de publicar valendo.
 
 ---
 
@@ -275,8 +410,10 @@ live/
   src/testar_app.mjs     exercita a mensagem final nos 44 clientes, sem navegador
   src/testar_webhooks.mjs  ponta a ponta nos webhooks publicados
   n8n/build.py           monta e publica os workflows        ⚠️ gera JSON com chave
-  docs/index.html        a tela — publicada pelo GitHub Pages
-  docs/app.js            estado, régua dos cenários, léxico, mensagem final
+  src/testar_filtros.mjs   busca, calendário, filtros, registro de envio
+  src/testar_correcao.mjs  correção de número, nota interna e o Code node do envio
+  app/index.html         a tela
+  app/app.js             estado, régua dos cenários, léxico, mensagem final
 ```
 
 `src/contrato.js` e `src/redacao.js` são as fontes únicas: `build.py` cola cada um dentro

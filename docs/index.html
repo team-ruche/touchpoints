@@ -85,6 +85,20 @@ input[type=text] {
   font:inherit; font-size:12.5px; padding:5px 9px; border-radius:8px;
   border:1px solid var(--line); background:var(--panel-2); color:var(--ink); width:100%;
 }
+input[type=search], input[type=date], select {
+  font:inherit; font-size:12.5px; padding:5px 9px; border-radius:8px;
+  border:1px solid var(--line); background:var(--panel-2); color:var(--ink);
+}
+input[type=search]:focus, input[type=date]:focus, select:focus,
+input[type=text]:focus { outline:2px solid var(--gold); outline-offset:-1px; }
+input[type=date]::-webkit-calendar-picker-indicator { filter:invert(.6); cursor:pointer; }
+.filtros { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%;
+  padding-top:9px; margin-top:2px; border-top:1px solid var(--line-soft); }
+.filtros .lbl { font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--tertiary); }
+.sep { width:1px; align-self:stretch; background:var(--line-soft); margin:0 2px; }
+.badge-env { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:7px;
+  font-size:11.5px; background:var(--critical-bg); border:1px solid var(--critical-bd); color:var(--critical); }
 
 .bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 12px;
   border-radius:12px; background:var(--panel); border:1px solid var(--line-soft);
@@ -148,6 +162,12 @@ input[type=text] {
   text-transform:uppercase; color:var(--tertiary); display:flex; align-items:center; gap:4px; }
 .num .k::after { content:"ⓘ"; opacity:.38; font-size:9px; }
 .num .v { font-size:17px; font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
+/* Número corrigido à mão. Precisa ser óbvio no cartão: é a única exceção à
+   regra de que todo número exibido veio do contrato. */
+.num.corrigido { background:var(--info-bg); border-color:var(--info-bd); }
+.num.corrigido .k::before { content:"✎ "; opacity:.75; }
+.num.corrigido .v { color:var(--info); }
+.tile.corr .k, .tile.corr .v { color:var(--info); }
 
 .callout { padding:10px 12px; border-radius:10px; font-size:12.5px; }
 .callout.critical { background:var(--critical-bg); border:1px solid var(--critical-bd); }
@@ -233,13 +253,43 @@ dialog .df { padding:12px 18px; border-top:1px solid var(--line-soft); display:f
     <span class="weekpill"><span id="weeklabel">—</span></span>
     <button id="next" title="próxima semana">▶</button>
     <span class="mono meta" id="weekiso"></span>
+    <input type="date" id="f-data" title="ir para a semana de uma data">
     <button id="recarregar">Recarregar</button>
-    <input type="text" id="f-gestor" placeholder="filtrar por gestor" style="width:170px">
+    <span class="sep"></span>
     <button id="btn-todos">Escrever a semana toda</button>
-    <button id="btn-envio" class="primary">Montar envio (dry-run)</button>
+    <button id="btn-envio" class="primary">Revisar e enviar</button>
+    <button id="btn-cs">Enviar para CS</button>
     <button id="btn-export" class="ghost">Exportar rascunhos</button>
     <button id="btn-cfg" class="ghost">Ajustes</button>
     <span class="hint" id="contagem"></span>
+
+    <div class="filtros">
+      <span class="lbl">filtros</span>
+      <input type="search" id="f-busca" placeholder="buscar cliente — nome ou #número" style="width:230px">
+      <select id="f-gestor"><option value="">todos os gestores</option></select>
+      <select id="f-cenario">
+        <option value="">todos os cenários</option>
+        <option value="A">A · semana forte</option>
+        <option value="B">B · lead entra, agenda não enche</option>
+        <option value="C">C · poucos leads, agenda ok</option>
+        <option value="D">D · semana fraca dos dois lados</option>
+        <option value="E">E · investiu e não gerou lead</option>
+        <option value="F">F · sem veiculação</option>
+        <option value="G">G · conta em aprendizado</option>
+        <option value="H">H · recuperação</option>
+        <option value="X">X · sem benchmark</option>
+      </select>
+      <select id="f-estado">
+        <option value="">qualquer estado</option>
+        <option value="pronto">pronto para enviar</option>
+        <option value="pendente">esperando resposta [ ]</option>
+        <option value="sem-texto">ainda sem texto</option>
+        <option value="editado">editado à mão</option>
+        <option value="bloqueado">bloqueado (não gera)</option>
+      </select>
+      <button id="f-limpar" class="ghost">Limpar</button>
+      <span class="hint" id="envio-estado"></span>
+    </div>
   </div>
 
   <div class="strip" id="strip"></div>
@@ -259,14 +309,89 @@ dialog .df { padding:12px 18px; border-top:1px solid var(--line-soft); display:f
     <button class="ghost" data-fechar style="margin-left:auto">Fechar</button>
   </div>
   <div class="db">
-    <div class="nota" style="margin-bottom:14px">
-      <b>Isto é dry-run.</b> O n8n montou a mensagem exata e <b>não</b> publicou no canal
-      <span class="mono">Touchpoints</span>. Para publicar de verdade são dois cadeados: a tela precisa
-      mandar <span class="mono">confirmar: true</span> <em>e</em> o workflow precisa ter
-      <span class="mono">envio_real_liberado: true</span> no node Config — que hoje está
-      <span class="mono">false</span>.
-    </div>
+    <div class="nota" style="margin-bottom:14px" id="envio-aviso"></div>
+    <div id="envio-correcoes"></div>
     <div id="envio-corpo"></div>
+  </div>
+  <div class="df" id="envio-rodape"></div>
+</dialog>
+
+<dialog id="dlg-publicar">
+  <div class="dh"><h2>Publicar no canal Touchpoints</h2></div>
+  <div class="db">
+    <div class="callout critical">
+      <b>Isto vai para o cliente.</b> A mensagem é publicada no canal
+      <span class="mono">Touchpoints</span> do ClickUp, que os clientes leem. Não há desfazer
+      pela tela — apagar depois é na mão, no ClickUp.
+    </div>
+    <div id="pub-resumo" class="sec"></div>
+    <div id="pub-alvo"></div>
+    <div id="pub-jaenviado"></div>
+    <div class="field">
+      <div class="fh"><span class="fl">Para confirmar, digite <span class="mono">PUBLICAR</span></span></div>
+      <input type="text" id="pub-confirma" autocomplete="off" placeholder="PUBLICAR">
+      <div class="meta" style="margin-top:4px">
+        A tela não registra o envio em banco — <span class="mono">mb_touchpoints</span> não existe ainda.
+        O controle de "já enviei esta semana" mora neste navegador, e é por isso que a confirmação é digitada.
+      </div>
+    </div>
+  </div>
+  <div class="df">
+    <button class="ghost" data-fechar>Cancelar</button>
+    <button class="primary" id="pub-executar" disabled>Publicar agora</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-num">
+  <div class="dh">
+    <h2>Corrigir números — <span id="num-cliente"></span></h2>
+    <button class="ghost" data-fechar style="margin-left:auto">Fechar</button>
+  </div>
+  <div class="db">
+    <div class="nota" style="margin-bottom:14px">
+      <b>Isto conserta o bloco, não o cadastro.</b> A correção vale para esta semana, neste navegador:
+      o Supabase continua com o valor antigo, e sem alguém arrumar a origem a mesma correção volta na
+      semana que vem. O bloco corrigido é reescrito pela régua na hora — e o cenário não é
+      reclassificado sozinho, por isso ele está aqui embaixo para você escolher.
+    </div>
+    <div id="num-campos"></div>
+    <div class="field">
+      <div class="fh">
+        <span class="fl">Por que o número do banco está errado?</span>
+        <span class="fhint">obrigatório — vai para o CS e para o CSV, nunca para o cliente</span>
+      </div>
+      <textarea class="box ed" id="num-motivo" rows="2"
+        placeholder="ex.: conta do Meta nunca sincronizou com o ad_insights; investimento conferido no gerenciador"></textarea>
+    </div>
+  </div>
+  <div class="df">
+    <button class="ghost" id="num-limpar">Voltar aos números do banco</button>
+    <button class="ghost" data-fechar>Cancelar</button>
+    <button class="primary" id="num-salvar">Salvar correção</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-cs">
+  <div class="dh">
+    <h2>Enviar para CS</h2>
+    <button class="ghost" data-fechar style="margin-left:auto">Fechar</button>
+  </div>
+  <div class="db">
+    <div class="nota" style="margin-bottom:14px">
+      Vai para a <b>conversa privada</b> da CS no ClickUp — pela conta que assina o token do n8n, então
+      para quem recebe é um DM dessa pessoa, não de um robô. O canal <span class="mono">Touchpoints</span>
+      não recebe nada por aqui: são caminhos separados, e enviar para a CS não conta como semana publicada.
+    </div>
+    <div id="cs-escopo"></div>
+    <div id="cs-quem"></div>
+    <div id="cs-resumo"></div>
+    <div id="cs-correcoes"></div>
+    <div id="cs-previa"></div>
+  </div>
+  <div class="df">
+    <button class="ghost" id="cs-previa-btn">Ver prévia</button>
+    <button class="ghost" data-fechar>Cancelar</button>
+    <button class="primary" id="cs-enviar" disabled>Enviar</button>
   </div>
 </dialog>
 
@@ -283,7 +408,16 @@ dialog .df { padding:12px 18px; border-top:1px solid var(--line-soft); display:f
       <input type="text" id="in-token">
       <div class="meta" style="margin-top:4px">
         Tem de bater com o campo <span class="mono">token</span> do node Config dos três workflows.
-        Não é autenticação forte — ele viaja no bundle desta página.
+        Não é autenticação forte, e é o que separa esta página pública dos dados dos clientes.
+      </div>
+    </div>
+    <div class="field">
+      <div class="fh"><span class="fl">Canal de ensaio (opcional)</span></div>
+      <input type="text" id="in-ensaio" placeholder="ex.: 8cdt0k7-12345">
+      <div class="meta" style="margin-top:4px">
+        Com um id aqui, o diálogo de publicar ganha a opção <b>ensaio</b>: a mensagem sai de
+        verdade, mas nesse canal em vez do <span class="mono">Touchpoints</span>. É onde dá para
+        clicar em Publicar sem cliente vendo. Vazio = só o canal real.
       </div>
     </div>
   </div>

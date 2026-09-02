@@ -80,6 +80,18 @@ function ultimaSemanaFechada(hoje = new Date()) {
   d.setDate(d.getDate() - dow - 7);
   return iso(d);
 }
+/** Segunda-feira da semana que contém `data` (YYYY-MM-DD). */
+function segundaDa(data) {
+  const [y, m, dd] = data.split("-").map(Number);
+  const d = new Date(y, m - 1, dd);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return iso(d);
+}
+/** Domingo que fecha a semana que começa em `ws`. */
+function domingoDa(ws) {
+  const [y, m, dd] = ws.split("-").map(Number);
+  return iso(new Date(y, m - 1, dd + 6));
+}
 function somaSemanas(ws, n) {
   const [y, m, dd] = ws.split("-").map(Number);
   const d = new Date(y, m - 1, dd);
@@ -185,6 +197,238 @@ const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
+
+/* ════════════ correção de número (incoerência de cadastro) ════════════
+ *
+ * A regra desta tela continua a mesma: nenhum número NASCE aqui. O que
+ * existe agora é uma exceção declarada — nomeada, justificada e visível.
+ *
+ * O motivo é concreto e a pesquisa já achou: cliente com agendamento de
+ * mídia e ZERO investimento registrado. O #526 GTF tem account_id_meta
+ * cadastrado e NUNCA teve uma linha em ad_insights; o bloco dele sai
+ * dizendo "sem investimento no período", que é o que o banco diz e não é o
+ * que aconteceu. Mandar isso para o cliente é pior do que corrigir à mão.
+ *
+ * O que a correção NÃO faz, de propósito:
+ *   • não escreve no Supabase — o cadastro continua errado, e é a
+ *     exportação que leva a lista de correções para quem conserta;
+ *   • não desbloqueia bloco bloqueado (D6 e falta de gestor continuam);
+ *   • não reclassifica o cenário sozinha — a régua de classificação mora no
+ *     contrato, não aqui. Quem corrige escolhe o cenário, na mão.
+ *
+ * Toda correção guarda de→para e um motivo obrigatório, e aparece no
+ * cartão, na lista, na prévia do envio e na nota interna que vai ao CS.
+ * Nunca aparece na mensagem do cliente.
+ */
+
+const r2 = (v) => Math.round(Number(v) * 100) / 100;
+const inteiro = (v) => Math.max(0, Math.round(Number(v) || 0));
+
+/** Mesma escada do `classe()` de contrato.js. É o único derivado que a tela
+ *  recalcula — e só depois de uma correção, para o cartão não exibir um
+ *  ritmo que já não corresponde ao número corrigido ao lado. */
+function classeRitmo(ritmo) {
+  if (ritmo === null || ritmo === undefined) return null;
+  if (ritmo >= 0.9) return "forte";
+  if (ritmo >= 0.6) return "dentro";
+  return "fraco";
+}
+
+const PLAT_ORDEM = ["meta", "google", "glsa"];
+
+/** Os campos corrigíveis, montados a partir do contrato do próprio cliente.
+ *  Plataforma AUSENTE entra na lista quando é renderizável: o caso que
+ *  motivou isto é justamente o investimento que nunca chegou ao banco. */
+function camposCorrigiveis(p) {
+  const plats = [...new Set([...Object.keys(p.midia.por_plataforma), ...(p.midia.renderizar || [])])].sort(
+    (a, b) => PLAT_ORDEM.indexOf(a) - PLAT_ORDEM.indexOf(b),
+  );
+  const campos = [];
+  for (const k of plats) {
+    const m = p.midia.por_plataforma[k] || {};
+    const nome = PLATAFORMA_LABEL[k] ?? k;
+    campos.push({ id: `midia.por_plataforma.${k}.spend`, grupo: "Semana",
+      rotulo: `Investimento — ${nome}`, tipo: "money", valor: m.spend ?? 0 });
+    campos.push({ id: `midia.por_plataforma.${k}.leads`, grupo: "Semana",
+      rotulo: `Leads — ${nome}`, tipo: "int", valor: m.leads ?? 0 });
+  }
+  campos.push({ id: "agendamento.semana", grupo: "Semana",
+    rotulo: "Agendamentos na semana", tipo: "int", valor: p.agendamento.semana });
+
+  campos.push({ id: "mes.spend", grupo: "Mês", rotulo: "Investimento no mês", tipo: "money", valor: p.mes.spend });
+  campos.push({ id: "mes.leads", grupo: "Mês", rotulo: "Leads no mês", tipo: "int", valor: p.mes.leads });
+  campos.push({ id: "mes.agendamentos", grupo: "Mês", rotulo: "Agendamentos no mês", tipo: "int", valor: p.mes.agendamentos });
+  campos.push({ id: "agendamento.meta_usada", grupo: "Mês", rotulo: "Meta de agendamento no mês",
+    tipo: "int", valor: p.agendamento.meta_usada });
+  // O rótulo da meta é o bug de origem em miniatura: número certo, origem
+  // falsa. Quem corrige a meta precisa poder dizer de onde ela vem.
+  campos.push({
+    id: "agendamento.origem_meta", grupo: "Mês", rotulo: "Origem da meta", tipo: "select",
+    valor: p.agendamento.origem_meta,
+    opcoes: [
+      { valor: "contrato", rotulo: "contratada — sai como “de N contratados”" },
+      { valor: "benchmark", rotulo: "referência do nicho — sai como “referência para a sua vertical”" },
+    ],
+  });
+
+  campos.push({ id: "comparacao.semana_anterior.spend", grupo: "Semana anterior",
+    rotulo: "Investimento na semana anterior", tipo: "money", valor: p.comparacao.semana_anterior.spend });
+  campos.push({ id: "comparacao.semana_anterior.leads", grupo: "Semana anterior",
+    rotulo: "Leads na semana anterior", tipo: "int", valor: p.comparacao.semana_anterior.leads });
+  campos.push({ id: "agendamento.semana_anterior", grupo: "Semana anterior",
+    rotulo: "Agendamentos na semana anterior", tipo: "int", valor: p.agendamento.semana_anterior });
+
+  campos.push({
+    id: "cenario.codigo", grupo: "Classificação", tipo: "select",
+    rotulo: "Cenário — o contrato classificou pelo número errado, reclassifique",
+    valor: p.cenario.codigo,
+    opcoes: Object.entries(CENARIO).map(([k, v]) => ({ valor: k, rotulo: `${k} · ${v.titulo}` })),
+  });
+  return campos;
+}
+
+const lerPath = (o, path) => path.split(".").reduce((a, k) => (a === null || a === undefined ? a : a[k]), o);
+
+function escreverPath(o, path, v) {
+  const ks = path.split(".");
+  let a = o;
+  for (const k of ks.slice(0, -1)) {
+    if (a[k] === null || typeof a[k] !== "object") a[k] = {};
+    a = a[k];
+  }
+  a[ks[ks.length - 1]] = v;
+}
+
+/** Aplica as correções e refaz TUDO que depende delas: CPL (por soma, nunca
+ *  média de coluna), totais, variação contra a semana anterior e ritmo
+ *  contra o benchmark. Meio-termo aqui é o pior dos mundos — seria o texto
+ *  citando um número e a mensagem imprimindo outro, que é exatamente o
+ *  defeito que originou este projeto. */
+function aplicarCorrecoes(p, c) {
+  const campos = (c && c.campos) || {};
+  if (!Object.keys(campos).length) return p;
+  const q = JSON.parse(JSON.stringify(p));
+  const de = {};
+
+  for (const [id, v] of Object.entries(campos)) {
+    de[id] = lerPath(p, id);
+    const partes = id.split(".");
+    if (id.startsWith("midia.por_plataforma.") && !q.midia.por_plataforma[partes[2]]) {
+      q.midia.por_plataforma[partes[2]] = { spend: 0, leads: 0, cpl: null, impressions: 0, clicks: 0, page_views: 0 };
+    }
+    escreverPath(q, id, v);
+  }
+
+  /* 1. plataforma → CPL, e o total por SOMA (checklist 8.8, item 5) */
+  const rend = new Set(q.midia.renderizar || []);
+  let sp = 0, ld = 0, im = 0, cl = 0, pv = 0, spRender = 0;
+  for (const [k, m] of Object.entries(q.midia.por_plataforma)) {
+    m.spend = r2(Number(m.spend) || 0);
+    m.leads = inteiro(m.leads);
+    m.cpl = m.leads > 0 ? r2(m.spend / m.leads) : null;
+    sp += m.spend;
+    ld += m.leads;
+    im += Number(m.impressions) || 0;
+    cl += Number(m.clicks) || 0;
+    pv += Number(m.page_views) || 0;
+    if (rend.has(k)) spRender += m.spend;
+  }
+  const t = q.midia.total;
+  t.spend = r2(sp);
+  t.leads = ld;
+  t.cpl = ld > 0 ? r2(sp / ld) : null;
+  t.impressions = im;
+  t.clicks = cl;
+  t.page_views = pv;
+  t.spend_renderizavel = r2(spRender);
+  t.spend_nao_renderizado = r2(sp - spRender);
+
+  /* 2. semana anterior e as três variações */
+  const a = q.comparacao.semana_anterior;
+  a.spend = r2(Number(a.spend) || 0);
+  a.leads = inteiro(a.leads);
+  a.cpl = a.leads > 0 ? r2(a.spend / a.leads) : null;
+  q.agendamento.semana = inteiro(q.agendamento.semana);
+  q.agendamento.semana_anterior = inteiro(q.agendamento.semana_anterior);
+  q.comparacao.var_spend = r2(t.spend - a.spend);
+  q.comparacao.var_leads = t.leads - a.leads;
+  q.comparacao.var_appts = q.agendamento.semana - q.agendamento.semana_anterior;
+
+  /* 3. mês. `mes_ate_domingo` é o mesmo acumulado do mês — o texto lê um, a
+        mensagem lê o outro, e eles não podem discordar. */
+  q.mes.spend = r2(Number(q.mes.spend) || 0);
+  q.mes.leads = inteiro(q.mes.leads);
+  q.mes.agendamentos = inteiro(q.mes.agendamentos);
+  q.agendamento.mes_ate_domingo = q.mes.agendamentos;
+  if (q.agendamento.meta_usada !== null && q.agendamento.meta_usada !== undefined) {
+    q.agendamento.meta_usada = Number(q.agendamento.meta_usada);
+    q.mes.meta_mensal = q.agendamento.meta_usada;
+  }
+
+  /* 4. ritmo contra o benchmark — as mesmas divisões de contrato.js */
+  const bm = q.benchmark;
+  if (q.agendamento.meta_usada) bm.bm_appt_semana = r2(q.agendamento.meta_usada / 4.33);
+  bm.ritmo_leads = bm.bm_leads_mes ? r2(t.leads / (bm.bm_leads_mes / 4.33)) : null;
+  bm.ritmo_appts = q.agendamento.meta_usada ? r2(q.agendamento.semana / (q.agendamento.meta_usada / 4.33)) : null;
+  bm.classe_leads = classeRitmo(bm.ritmo_leads);
+  bm.classe_appts = classeRitmo(bm.ritmo_appts);
+  bm.cpl_vs_bm = bm.bm_cpl && t.cpl !== null ? r2(t.cpl / bm.bm_cpl) : null;
+
+  /* 5. a correção passa a fazer parte do contrato: quem ler o payload depois
+        sabe que houve mão humana, o que mudou e por quê. */
+  q.correcao = {
+    campos: { ...campos },
+    de,
+    motivo: (c && c.motivo) || "",
+    em: (c && c.em) || null,
+  };
+  q.proveniencia = {
+    ...(q.proveniencia || {}),
+    correcao_manual: `${Object.keys(campos).length} campo(s) corrigido(s) na tela — motivo: ${(c && c.motivo) || "—"}`,
+  };
+  return q;
+}
+
+/** "Rótulo: de → para", uma linha por correção. Serve ao cartão, à prévia do
+ *  envio, à nota interna do CS e ao CSV que vai para quem conserta o
+ *  cadastro. Recebe o payload ORIGINAL — é dele que sai o "de". */
+function resumoCorrecao(p, c) {
+  if (!c || !c.campos) return [];
+  const dic = new Map(camposCorrigiveis(p).map((f) => [f.id, f]));
+  return Object.entries(c.campos).map(([id, v]) => {
+    const f = dic.get(id);
+    const fmt = (x) =>
+      x === null || x === undefined || x === "" ? "—" : f && f.tipo === "money" ? money(x) : String(x);
+    return { id, rotulo: f ? f.rotulo : id, de: fmt(lerPath(p, id)), para: fmt(v) };
+  });
+}
+
+const linhaCorrecao = (x) => `${x.rotulo}: ${x.de} → ${x.para}`;
+
+/** Números que existiam ANTES da correção e ainda aparecem no texto. É a
+ *  guarda que impede o pior resultado possível desta feature: o gestor
+ *  conserta o número no cabeçalho e o parágrafo continua citando o antigo. */
+function citaNumeroAntigo(p, texto) {
+  const corr = p.correcao;
+  if (!corr) return [];
+  const todo = `${texto.comoFoi} ${texto.proximoPasso} ${texto.pedido}`;
+  const vistos = new Set();
+  const achados = [];
+  for (const [id, antigo] of Object.entries(corr.de)) {
+    if (id.endsWith("origem_meta") || id.endsWith("codigo")) continue;
+    if (antigo === null || antigo === undefined) continue;
+    const novo = corr.campos[id];
+    const n = Number(antigo);
+    if (!Number.isFinite(n) || n === 0 || Number(novo) === n) continue;
+    for (const forma of [String(n), n.toFixed(2), String(Math.round(n))]) {
+      if (vistos.has(forma)) continue;
+      vistos.add(forma);
+      const re = new RegExp(`(^|[^\\d.,])${forma.replace(/[.]/g, "\\.")}([^\\d.,]|$)`);
+      if (re.test(todo)) achados.push(forma);
+    }
+  }
+  return achados;
+}
 
 /* ───────────────────── rascunho de texto (esqueleto) ───────────────────── */
 
@@ -320,7 +564,8 @@ function checklist(p, texto) {
   );
   const plats = Object.entries(p.midia.por_plataforma);
   const t = p.midia.total;
-  return [
+  const corr = p.correcao || null;
+  const itens = [
     { id: "proveniencia", label: "Todo número exibido tem proveniência registrada",
       ok: Object.keys(p.proveniencia ?? {}).length > 0 },
     { id: "contrato", label: "Nenhum número veio de campo de contrato disfarçado de resultado",
@@ -339,6 +584,24 @@ function checklist(p, texto) {
     { id: "acao", label: "A ação citada corresponde a uma otimização registrada na conta",
       ok: p.contexto_mb.length > 0, manual: true },
   ];
+  // A correção de número é uma exceção declarada à regra "nenhum número
+  // nasce na tela". Ela tem de aparecer no checklist, e não passar batida.
+  if (corr) {
+    itens.push({
+      id: "correcao",
+      label: `${Object.keys(corr.campos).length} número(s) corrigido(s) à mão — motivo registrado`,
+      ok: Boolean((corr.motivo || "").trim()),
+      manual: true,
+    });
+    itens.push({
+      id: "texto_corrigido",
+      label: "O texto não repete nenhum número de antes da correção",
+      ok: citaNumeroAntigo(p, texto).length === 0,
+    });
+  } else {
+    itens.push({ id: "correcao", label: "Nenhum número foi corrigido à mão", ok: true });
+  }
+  return itens;
 }
 
 /** Marcadores `[…]` que sobraram. A tela não deixa enviar com eles. */
@@ -349,17 +612,69 @@ function pendencias(texto) {
 
 /* ═══════════════════════════════ estado ═══════════════════════════════ */
 
+const FILTROS_PADRAO = { semaforo: null, gestor: "", busca: "", cenario: "", estado: "", soCorrigidos: false };
+
 const S = {
   semana: lerJSON("tp_semana", null) || ultimaSemanaFechada(),
   linhas: [],
   leitura: null,
   sel: null,
-  filtroSemaforo: null,
-  filtroGestor: "",
+  ...FILTROS_PADRAO,
+  ...lerJSON("tp_filtros", {}),
   carregando: false,
   erro: null,
   gerando: new Set(),
 };
+
+function salvarFiltros() {
+  gravarJSON("tp_filtros", {
+    semaforo: S.semaforo,
+    gestor: S.gestor,
+    busca: S.busca,
+    cenario: S.cenario,
+    estado: S.estado,
+    soCorrigidos: S.soCorrigidos,
+  });
+}
+
+/** Registro de envio. Vive no navegador porque `mb_touchpoints` não existe —
+ *  e existe porque a pesquisa achou reenvio do mesmo bloco em 6 das 16
+ *  semanas do canal. Sem isto, publicar duas vezes é um clique. */
+let ENVIADOS = lerJSON("tp_enviados", {});
+const chaveE = (ws, gestor) => `${ws}|${gestor}`;
+const envioDe = (ws, gestor) => ENVIADOS[chaveE(ws, gestor)] || null;
+function registrarEnvio(ws, gestor, dados) {
+  ENVIADOS[chaveE(ws, gestor)] = { ...dados, em: new Date().toISOString() };
+  gravarJSON("tp_enviados", ENVIADOS);
+}
+/** Gestores desta semana que já receberam publicação. */
+function enviosDaSemana(ws) {
+  return Object.entries(ENVIADOS)
+    .filter(([k]) => k.startsWith(ws + "|"))
+    .map(([k, v]) => ({ gestor: k.slice(ws.length + 1), ...v }));
+}
+
+/** As CS que recebem o touchpoint na conversa privada do ClickUp.
+ *
+ *  O id do canal NÃO mora aqui: quem resolve `eduarda` → canal de DM é o
+ *  node Config do workflow de envio. A tela é pública, e um id de DM no
+ *  bundle é um convite a mandar mensagem para a pessoa errada por engano.
+ *
+ *  A mensagem chega pela conta que assina o token do ClickUp no n8n — hoje
+ *  a do Patrick. Para quem recebe, é um DM do Patrick, não de um robô. */
+const CS = [
+  { id: "eduarda", nome: "Eduarda Zancanella", curto: "Eduarda" },
+  { id: "amanda", nome: "Amanda Blaszczyk", curto: "Amanda" },
+];
+
+const chaveCS = (ws, cs) => `${ws}|cs:${cs}`;
+let CS_ENVIADOS = lerJSON("tp_cs_enviados", {});
+const envioCSDe = (ws, cs) => CS_ENVIADOS[chaveCS(ws, cs)] || null;
+function registrarEnvioCS(ws, cs, dados) {
+  CS_ENVIADOS[chaveCS(ws, cs)] = { ...dados, em: new Date().toISOString() };
+  gravarJSON("tp_cs_enviados", CS_ENVIADOS);
+}
+
 
 /** Rascunhos: chave `${week_start}|${client_id}`. Vivem só neste navegador. */
 const chaveR = (ws, cid) => `${ws}|${cid}`;
@@ -379,6 +694,61 @@ function apagarRascunho(ws, cid) {
   gravarJSON("tp_rascunhos", RASCUNHOS);
 }
 
+/** Correções de número. Ficam FORA do rascunho de texto de propósito:
+ *  "Voltar ao esqueleto" descarta o que a régua escreveu, e não pode
+ *  descartar junto o conserto de um número errado no cadastro. */
+let CORRECOES = lerJSON("tp_correcoes", {});
+
+const correcaoDe = (ws, cid) => CORRECOES[chaveR(ws, cid)] || null;
+
+function salvarCorrecao(ws, cid, c) {
+  if (!c || !Object.keys(c.campos || {}).length) delete CORRECOES[chaveR(ws, cid)];
+  else CORRECOES[chaveR(ws, cid)] = { ...c, em: new Date().toISOString() };
+  if (!gravarJSON("tp_correcoes", CORRECOES)) {
+    aviso("Não consegui gravar a correção neste navegador (armazenamento bloqueado). Exporte antes de fechar.");
+  }
+}
+
+const temCorrecao = (r) => {
+  const c = correcaoDe(S.semana, r.client_id);
+  return Boolean(c && Object.keys(c.campos || {}).length);
+};
+
+/** O contrato COM as correções aplicadas. TUDO na tela passa por aqui — se
+ *  duas partes da tela lessem payloads diferentes, o texto citaria um número
+ *  e a mensagem imprimiria outro. */
+const payloadDe = (r) => aplicarCorrecoes(r.payload, correcaoDe(S.semana, r.client_id));
+
+/** As correções da semana inteira: prévia do envio, nota do CS e CSV. */
+function correcoesDaSemana() {
+  return S.linhas
+    .filter(temCorrecao)
+    .map((r) => {
+      const c = correcaoDe(S.semana, r.client_id);
+      return {
+        cliente: r.client_name,
+        client_id: r.client_id,
+        motivo: c.motivo || "",
+        em: c.em,
+        itens: resumoCorrecao(r.payload, c),
+      };
+    });
+}
+
+/** A nota que acompanha o bloco quando ele vai para o CS. Nunca vai para o
+ *  canal do cliente: quem imprime é o workflow, e só no destino `cs`. */
+function notaInternaDe(r) {
+  if (!temCorrecao(r)) return null;
+  const c = correcaoDe(S.semana, r.client_id);
+  return (
+    "número corrigido à mão — " +
+    resumoCorrecao(r.payload, c).map(linhaCorrecao).join("; ") +
+    " · motivo: " +
+    (c.motivo || "—")
+  );
+}
+
+
 /** O texto vigente: o que o MB escreveu, senão o esqueleto.
  *  `lacunas` e `escolhas` vêm junto: são o que a redação sem IA devolve
  *  quando um fato não está no banco (o motivo de uma pausa, por exemplo) e
@@ -392,7 +762,7 @@ function textoDe(r) {
       lacunas: d.lacunas || [],
       escolhas: d.escolhas || {},
     };
-  return { texto: rascunhoDeTexto(r.payload), origem: "esqueleto", lacunas: [], escolhas: {} };
+  return { texto: rascunhoDeTexto(payloadDe(r)), origem: "esqueleto", lacunas: [], escolhas: {} };
 }
 
 /* ═══════════════════════════════ render ═══════════════════════════════ */
@@ -424,6 +794,39 @@ function renderBarra() {
     : n
       ? `${n} clientes elegíveis${S.leitura ? ` · ${S.leitura.ad_insights} linhas de ad_insights, ${S.leitura.agendamentos} agendamentos lidos em ${(S.leitura.ms / 1000).toFixed(1)}s` : ""}`
       : "";
+
+  // calendário: qualquer dia serve, a tela cai na segunda daquela semana
+  const data = $("#f-data");
+  if (data.value !== S.semana) data.value = S.semana;
+  // O teto é o DOMINGO que fechou a última semana, não a segunda dela: quem
+  // procura "a semana do dia 22" tem de conseguir digitar 22.
+  data.max = domingoDa(ultimaSemanaFechada());
+
+  // gestores vêm da semana carregada, não de uma lista fixa
+  const sel = $("#f-gestor");
+  const gs = [...new Set(S.linhas.flatMap((r) => r.gestores || []))].sort();
+  const desejado = `<option value="">todos os gestores</option>` +
+    gs.map((g) => `<option value="${esc(g)}"${S.gestor === g ? " selected" : ""}>${esc(g)}</option>`).join("");
+  if (sel.dataset.assinatura !== gs.join("|") + "::" + S.gestor) {
+    sel.innerHTML = desejado;
+    sel.dataset.assinatura = gs.join("|") + "::" + S.gestor;
+  }
+  $("#f-busca").value = S.busca;
+  $("#f-cenario").value = S.cenario;
+  $("#f-estado").value = S.estado;
+  $("#f-limpar").disabled = !filtrosAtivos();
+
+  const envs = enviosDaSemana(S.semana);
+  const csEnv = CS.filter((c) => envioCSDe(S.semana, c.id));
+  $("#envio-estado").innerHTML =
+    (envs.length
+      ? `<span class="badge-env">● publicado nesta semana: ${envs.map((e) => esc(e.gestor)).join(", ")}</span> `
+      : "") +
+    (csEnv.length
+      ? `<span class="badge-env" style="background:var(--info-bg);border-color:var(--info-bd);color:var(--info)">● CS: ${csEnv
+          .map((c) => esc(c.curto))
+          .join(", ")}</span>`
+      : "");
 }
 
 function renderStrip() {
@@ -443,41 +846,91 @@ function renderStrip() {
     ["verde", "amarelo", "laranja", "vermelho"]
       .map(
         (k) =>
-          `<button class="tile sem ${k}" data-sem="${k}" aria-pressed="${S.filtroSemaforo === k}">
+          `<button class="tile sem ${k}" data-sem="${k}" aria-pressed="${S.semaforo === k}">
              <div class="k">${rot[k]}</div><div class="v">${cont[k]}</div></button>`,
       )
       .join("") +
-    `<div class="tile"><div class="k">sem marcador</div><div class="v">${prontos}</div></div>`;
-  for (const b of document.querySelectorAll(".tile.sem")) {
+    `<div class="tile"><div class="k">sem marcador</div><div class="v">${prontos}</div></div>` +
+    `<button class="tile sem corr" id="tile-corr" aria-pressed="${S.soCorrigidos}"
+       title="clientes com número corrigido à mão nesta semana">
+       <div class="k">corrigidos</div><div class="v">${S.linhas.filter(temCorrecao).length}</div></button>`;
+  for (const b of document.querySelectorAll(".tile.sem[data-sem]")) {
     b.onclick = () => {
-      S.filtroSemaforo = S.filtroSemaforo === b.dataset.sem ? null : b.dataset.sem;
+      S.semaforo = S.semaforo === b.dataset.sem ? null : b.dataset.sem;
+      salvarFiltros();
       render();
     };
   }
+  const tc = $("#tile-corr");
+  if (tc)
+    tc.onclick = () => {
+      S.soCorrigidos = !S.soCorrigidos;
+      salvarFiltros();
+      render();
+    };
+}
+
+/** O estado do bloco, do ponto de vista de quem vai enviar. É o que o filtro
+ *  "estado" usa e o que decide se o cliente entra no envio. */
+function estadoDe(r) {
+  if (!r.pode_gerar) return "bloqueado";
+  const d = rascunhoDe(S.semana, r.client_id);
+  if (!d || !d.texto) return "sem-texto";
+  const { texto, origem } = textoDe(r);
+  if (pendencias(texto).length) return "pendente";
+  return origem === "rascunho" ? "editado" : "pronto";
+}
+
+/** Busca por nome ou por número do cliente. `#202`, `202` e `flooring` acham
+ *  a mesma linha — o gestor lembra do número, o chefe lembra do nome. */
+function casaBusca(r, termo) {
+  const q = termo.trim().toLowerCase().replace(/^#/, "");
+  if (!q) return true;
+  const nome = String(r.client_name || "").toLowerCase();
+  const num = String(r.payload?.identificacao?.numero || "").toLowerCase();
+  const nicho = String(r.payload?.identificacao?.nicho || "").toLowerCase();
+  return nome.includes(q) || num === q || num.startsWith(q) || nicho.includes(q);
 }
 
 function visiveis() {
   return S.linhas.filter((r) => {
-    if (S.filtroSemaforo && r.semaforo !== S.filtroSemaforo) return false;
-    if (S.filtroGestor && !(r.gestores || []).some((g) => g.toLowerCase().includes(S.filtroGestor.toLowerCase())))
-      return false;
+    if (S.semaforo && r.semaforo !== S.semaforo) return false;
+    if (S.gestor && !(r.gestores || []).includes(S.gestor)) return false;
+    if (S.cenario && r.cenario !== S.cenario) return false;
+    if (S.estado && estadoDe(r) !== S.estado) return false;
+    if (S.soCorrigidos && !temCorrecao(r)) return false;
+    if (!casaBusca(r, S.busca)) return false;
     return true;
   });
 }
 
+const filtrosAtivos = () =>
+  Boolean(S.semaforo || S.gestor || S.cenario || S.estado || S.soCorrigidos || S.busca.trim());
+
+const MARCA_ESTADO = {
+  bloqueado: "",
+  "sem-texto": "",
+  pendente: "◻",
+  editado: "✎",
+  pronto: "✦",
+};
+
 function renderLista() {
   const vs = visiveis();
-  $("#listhead").textContent = `${vs.length} de ${S.linhas.length}`;
-  $("#list").innerHTML = vs
-    .map((r) => {
-      const d = rascunhoDe(S.semana, r.client_id);
-      const marca = d ? (d.origem === "regua" ? "✦" : "✎") : "";
-      return `<button class="row" role="option" data-id="${r.client_id}" aria-current="${S.sel === r.client_id}">
-        <span class="dot ${r.semaforo}"></span>
-        <span class="nm">${esc(r.client_name)}</span>
-        <span class="cen">${marca}${r.cenario}</span></button>`;
-    })
-    .join("");
+  $("#listhead").textContent =
+    `${vs.length} de ${S.linhas.length}` + (filtrosAtivos() ? " · filtrado" : "");
+  $("#list").innerHTML = vs.length
+    ? vs
+        .map((r) => {
+          const marca = (temCorrecao(r) ? "≠" : "") + (MARCA_ESTADO[estadoDe(r)] || "");
+          return `<button class="row" role="option" data-id="${r.client_id}" aria-current="${S.sel === r.client_id}"
+            title="${esc(r.client_name)} · cenário ${r.cenario} · ${estadoDe(r)}">
+            <span class="dot ${r.semaforo}"></span>
+            <span class="nm">${esc(r.client_name)}</span>
+            <span class="cen">${marca}${r.cenario}</span></button>`;
+        })
+        .join("")
+    : `<div class="meta" style="padding:14px">Nenhum cliente com esse filtro.</div>`;
   for (const b of document.querySelectorAll("#list .row")) {
     b.onclick = () => {
       S.sel = b.dataset.id;
@@ -486,8 +939,10 @@ function renderLista() {
   }
 }
 
-function numero(k, v, prov) {
-  return `<div class="num" title="${esc(prov || "")}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+function numero(k, v, prov, corrigido) {
+  return `<div class="num${corrigido ? " corrigido" : ""}" title="${esc(
+    (corrigido ? "CORRIGIDO À MÃO — " : "") + (prov || ""),
+  )}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 }
 
 function renderCartao() {
@@ -514,7 +969,9 @@ function renderCartao() {
   }
   S.sel = r.client_id;
 
-  const p = r.payload;
+  const p = payloadDe(r);
+  const corr = correcaoDe(S.semana, r.client_id);
+  const itensCorr = corr ? resumoCorrecao(r.payload, corr) : [];
   const t = p.midia.total;
   const ag = p.agendamento;
   const bm = p.benchmark;
@@ -523,7 +980,12 @@ function renderCartao() {
   const pend = pendencias(texto);
   const proib = termosProibidos(`${texto.comoFoi} ${texto.proximoPasso} ${texto.pedido}`);
   const chk = checklist(p, texto);
+  const citaAntigo = citaNumeroAntigo(p, texto);
   const mensagem = montarMensagem(p, texto);
+  /** Um número do cabeçalho foi corrigido? `sufixo` casa por final de path,
+   *  porque o investimento é por plataforma e o total é derivado dele. */
+  const tocou = (sufixo) =>
+    Boolean(corr && Object.keys(corr.campos || {}).some((k) => k === sufixo || k.endsWith("." + sufixo)));
   const gerando = S.gerando.has(r.client_id);
 
   const plats = Object.entries(p.midia.por_plataforma);
@@ -535,6 +997,7 @@ function renderCartao() {
       <span class="chip">${esc(p.identificacao.nicho || "sem nicho")}</span>
       ${p.identificacao.plano ? `<span class="chip">${esc(p.identificacao.plano)}</span>` : ""}
       <span class="chip">${esc((p.identificacao.gestores || []).join(", ") || "sem gestor")}</span>
+      ${itensCorr.length ? `<span class="chip info">≠ ${itensCorr.length} número(s) corrigido(s)</span>` : ""}
     </div>
     <div class="meta">${esc(p.semana.label)} · fuso ${esc(p.semana.timezone)} · ${esc(p.identificacao.tier || "")}</div>
 
@@ -553,12 +1016,31 @@ function renderCartao() {
     }
 
     <div class="sec">
-      <h3>Semana — ${plats.length ? plats.map(([k]) => PLATAFORMA_LABEL[k] ?? k).join(" + ") : "sem investimento"}</h3>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <h3 style="margin:0">Semana — ${plats.length ? plats.map(([k]) => PLATAFORMA_LABEL[k] ?? k).join(" + ") : "sem investimento"}</h3>
+        <button id="btn-corrigir">${itensCorr.length ? "Revisar correção" : "Corrigir números"}</button>
+        <span class="fhint" style="margin-left:auto">o número vem do banco — corrija só quando o banco estiver errado</span>
+      </div>
+      ${
+        itensCorr.length
+          ? `<div class="callout" style="background:var(--info-bg);border:1px solid var(--info-bd);margin-bottom:9px">
+               <b style="color:var(--info)">Números corrigidos à mão.</b> O Supabase continua com o valor antigo —
+               exporte a lista e mande para quem conserta o cadastro, senão a mesma correção volta na semana que vem.
+               <ul>${itensCorr
+                 .map(
+                   (x) =>
+                     `<li>${esc(x.rotulo)}: <span class="mono">${esc(x.de)}</span> → <b class="mono">${esc(x.para)}</b></li>`,
+                 )
+                 .join("")}</ul>
+               <div style="margin-top:6px"><b>Motivo:</b> ${esc(corr.motivo || "—")}</div>
+             </div>`
+          : ""
+      }
       <div class="nums">
-        ${numero("Ad Spend", money(t.spend), p.proveniencia.spend_leads)}
-        ${numero("Leads", t.leads, p.proveniencia.spend_leads)}
-        ${numero("CPL", money(t.cpl), p.proveniencia.cpl)}
-        ${numero("Agendamentos", ag.semana, p.proveniencia.agendamento)}
+        ${numero("Ad Spend", money(t.spend), p.proveniencia.spend_leads, tocou("spend"))}
+        ${numero("Leads", t.leads, p.proveniencia.spend_leads, tocou("leads"))}
+        ${numero("CPL", money(t.cpl), p.proveniencia.cpl, tocou("spend") || tocou("leads"))}
+        ${numero("Agendamentos", ag.semana, p.proveniencia.agendamento, tocou("agendamento.semana"))}
         ${numero("Impressões", t.impressions.toLocaleString("pt-BR"), p.proveniencia.spend_leads)}
         ${numero("Page views", t.page_views.toLocaleString("pt-BR"), p.proveniencia.spend_leads)}
       </div>
@@ -669,6 +1151,12 @@ function renderCartao() {
           : ""
       }
       ${
+        citaAntigo.length
+          ? `<div class="callout critical"><b>O texto ainda cita ${esc(citaAntigo.join(", "))}</b> —
+             número de antes da correção. Reescreva pela régua ou corrija a frase à mão.</div>`
+          : ""
+      }
+      ${
         proib.length
           ? `<div class="nota" style="background:var(--warning-bg);border-color:var(--warning-bd)">
              <b style="color:var(--warning)">Léxico:</b>
@@ -726,6 +1214,8 @@ function renderCartao() {
     };
   }
 
+  const bCorr = $("#btn-corrigir");
+  if (bCorr) bCorr.onclick = () => abrirCorrecao(r);
   const bIa = $("#btn-ia");
   if (bIa) bIa.onclick = () => escrever(r, escolhas);
   const bR = $("#btn-reset");
@@ -774,7 +1264,7 @@ async function escrever(r, escolhas, silencioso) {
   S.gerando.add(r.client_id);
   if (!silencioso) render();
   try {
-    const j = await chamar("mb-touchpoint-redacao", { contrato: r.payload, escolhas: escolhas || {} });
+    const j = await chamar("mb-touchpoint-redacao", { contrato: payloadDe(r), escolhas: escolhas || {} });
     if (j.ok === false) throw new Error(j.dica ? `${j.erro} — ${j.dica}` : j.erro || "a redação voltou com erro");
     const texto = {
       comoFoi: j.como_foi ?? "",
@@ -841,28 +1331,39 @@ async function escreverTodos() {
   );
 }
 
-/** Agrupa por gestor e pede a prévia da mensagem do canal. Não publica. */
-async function montarEnvio() {
-  const prontos = S.linhas.filter((r) => {
-    if (!r.pode_gerar) return false;
-    const { texto } = textoDe(r);
-    return pendencias(texto).length === 0;
-  });
-  if (!prontos.length) {
-    aviso("Nenhum cliente pronto: todos estão bloqueados ou ainda têm marcadores [ ].");
-    return;
-  }
+/** Os blocos que entram no envio, agrupados por gestor.
+ *
+ *  O FILTRO NÃO ENTRA AQUI de propósito. Filtrar é para revisar; enviar é
+ *  sobre a semana inteira. Se o filtro mandasse no envio, uma busca esquecida
+ *  na caixa faria o cliente de fora sumir sem ninguém perceber. */
+function blocosParaEnvio() {
   const porGestor = new Map();
-  for (const r of prontos) {
+  for (const r of S.linhas) {
+    if (estadoDe(r) !== "pronto" && estadoDe(r) !== "editado") continue;
+    const { texto } = textoDe(r);
+    const p = payloadDe(r);
+    // A nota da correção só é IMPRESSA no destino `cs` — quem decide é o
+    // workflow. O canal do cliente recebe o bloco sem nota nenhuma.
+    const nota = notaInternaDe(r);
     for (const g of r.gestores.length ? r.gestores : ["(sem gestor)"]) {
       if (!porGestor.has(g)) porGestor.set(g, []);
-      const { texto } = textoDe(r);
       porGestor.get(g).push({
         client_id: r.client_id,
-        cliente: r.payload.identificacao.cliente,
-        message_text: montarMensagem(r.payload, texto),
+        cliente: p.identificacao.cliente,
+        message_text: montarMensagem(p, texto),
+        ...(nota ? { nota_interna: nota } : {}),
       });
     }
+  }
+  return porGestor;
+}
+
+/** Pede ao n8n a prévia (dry-run) de cada gestor. Nada é publicado aqui. */
+async function montarEnvio() {
+  const porGestor = blocosParaEnvio();
+  if (!porGestor.size) {
+    aviso("Nenhum cliente pronto: ou estão bloqueados, ou sem texto, ou ainda com marcador [ ].");
+    return;
   }
   const saidas = [];
   for (const [gestor, blocos] of porGestor) {
@@ -872,9 +1373,9 @@ async function montarEnvio() {
         blocos,
         periodo: rotuloSemana(S.semana),
         week_start: S.semana,
-        // sem `confirmar: true` — dry-run. O envio real tem outro cadeado no n8n.
+        // sem `confirmar: true` — prévia. Publicar é o botão do rodapé.
       });
-      saidas.push(j);
+      saidas.push({ ...j, gestor, blocos });
     } catch (e) {
       saidas.push({ ok: false, gestor, erro: String(e.message || e) });
     }
@@ -884,16 +1385,509 @@ async function montarEnvio() {
 
 function abrirEnvio(saidas) {
   const dlg = $("#dlg-envio");
+  const boas = saidas.filter((s) => s.ok !== false);
+  const jaEnviados = boas.filter((s) => envioDe(S.semana, s.gestor));
+
+  $("#envio-aviso").innerHTML = jaEnviados.length
+    ? `<b style="color:var(--critical)">Atenção: ${jaEnviados.length} gestor(es) já tiveram esta semana publicada</b>
+       — ${jaEnviados
+         .map((s) => `${esc(s.gestor)} em ${new Date(envioDe(S.semana, s.gestor).em).toLocaleString("pt-BR")}`)
+         .join(" · ")}.
+       Publicar de novo manda a mensagem <b>outra vez</b> para o cliente. A pesquisa achou reenvio do mesmo
+       bloco em 6 das 16 semanas do canal — é o erro mais comum aqui.`
+    : `<b>Prévia.</b> O n8n montou a mensagem exata e ainda <b>não</b> publicou. O botão
+       <b>Publicar no canal</b> lá embaixo é que envia — e ele pede confirmação digitada.`;
+
+  const corrs = correcoesDaSemana();
+  $("#envio-correcoes").innerHTML = corrs.length
+    ? `<div class="callout" style="background:var(--info-bg);border:1px solid var(--info-bd);margin-bottom:14px">
+         <b style="color:var(--info)">${corrs.length} cliente(s) com número corrigido à mão.</b>
+         O que vai para o cliente é o número corrigido. O de→para e o motivo ficam internos —
+         vão na nota do CS e no CSV, nunca na mensagem.
+         <ul>${corrs
+           .map(
+             (c) =>
+               `<li><b>${esc(c.cliente)}</b> — ${esc(c.itens.map(linhaCorrecao).join("; "))}<br>
+                <span class="meta">motivo: ${esc(c.motivo || "—")}</span></li>`,
+           )
+           .join("")}</ul>
+         <button class="ghost" id="btn-csv" style="margin-top:6px">Baixar CSV para corrigir o cadastro</button>
+       </div>`
+    : "";
+  const bcsv = $("#btn-csv");
+  if (bcsv) bcsv.onclick = baixarCorrecoesCSV;
+
   $("#envio-corpo").innerHTML = saidas
     .map((s) =>
       s.ok === false
         ? `<div class="callout critical"><b>${esc(s.gestor || "")}</b><div class="mono">${esc(s.erro)}</div></div>`
         : `<div class="sec"><h3>@${esc(s.gestor)} — ${s.clientes} cliente(s), ${s.caracteres} caracteres
-             ${s.dry_run ? `<span class="chip warning">dry-run · ${esc(s.motivo_dry_run)}</span>` : `<span class="chip critical">PUBLICADO</span>`}</h3>
+             ${
+               envioDe(S.semana, s.gestor)
+                 ? `<span class="chip critical">já publicado</span>`
+                 : s.dry_run
+                   ? `<span class="chip warning">prévia</span>`
+                   : `<span class="chip critical">PUBLICADO</span>`
+             }</h3>
            <div class="msg">${esc(s.mensagem)}</div></div>`,
     )
     .join("");
+
+  const total = boas.reduce((a, s) => a + (s.clientes || 0), 0);
+  $("#envio-rodape").innerHTML = boas.length
+    ? `<button class="ghost" data-fechar>Fechar</button>
+       <button id="btn-cs-daqui">Enviar para CS</button>
+       <button class="primary" id="btn-publicar">Publicar no canal — ${boas.length} mensagem(ns), ${total} cliente(s)</button>`
+    : `<button class="ghost" data-fechar>Fechar</button>`;
+
+  const bp = $("#btn-publicar");
+  if (bp) bp.onclick = () => abrirPublicar(boas);
+  const bcs = $("#btn-cs-daqui");
+  if (bcs)
+    bcs.onclick = () => {
+      dlg.close();
+      abrirCS();
+    };
+  for (const b of dlg.querySelectorAll("[data-fechar]")) b.onclick = () => dlg.close();
   dlg.showModal();
+}
+
+/* ─────────────────── publicar de verdade (canal do cliente) ─────────────────── */
+
+function abrirPublicar(saidas) {
+  const dlg = $("#dlg-publicar");
+  const total = saidas.reduce((a, s) => a + (s.clientes || 0), 0);
+  // Ensaio: publica de verdade, num canal sem cliente. É o que permite alguém
+  // clicar no botão inteiro antes de fazer isso valendo.
+  let ensaio = Boolean(cfg.ensaio);
+  $("#pub-alvo").innerHTML = cfg.ensaio
+    ? `<div class="field" style="margin-top:10px">
+         <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+           <input type="checkbox" id="pub-ensaio" checked style="margin-top:3px">
+           <span>Mandar para o <b>canal de ensaio</b> (<span class="mono">${esc(cfg.ensaio)}</span>)
+             em vez do <span class="mono">Touchpoints</span>. A mensagem sai de verdade — só não vai
+             para o cliente.</span>
+         </label>
+       </div>`
+    : "";
+  $("#pub-resumo").innerHTML = `
+    <div class="mesbox">
+      <span class="lbl">${esc(rotuloSemana(S.semana))} · canal Touchpoints</span>
+      <span>Mensagens: <b>${saidas.length}</b> (uma por gestor)</span>
+      <span>Clientes: <b>${total}</b></span>
+      <span>Gestores: <b>${saidas.map((s) => esc(s.gestor)).join(", ")}</b></span>
+    </div>`;
+
+  const repetidos = saidas.filter((s) => envioDe(S.semana, s.gestor));
+  $("#pub-jaenviado").innerHTML = repetidos.length
+    ? `<div class="callout critical" style="margin-top:10px"><b>REENVIO</b> —
+       ${repetidos.map((s) => esc(s.gestor)).join(", ")} já receberam esta semana. O cliente vai ver a
+       mensagem duas vezes.</div>`
+    : "";
+
+  const campo = $("#pub-confirma");
+  const botao = $("#pub-executar");
+  const cx = $("#pub-ensaio");
+  const pintar = () => {
+    ensaio = cx ? cx.checked : false;
+    botao.textContent = ensaio ? "Publicar no ensaio" : "Publicar agora";
+    // Só o envio de verdade exige digitar. No ensaio o atrito não protege
+    // nada — e um botão difícil de apertar é um botão que ninguém testa.
+    campo.closest(".field").hidden = ensaio;
+    botao.disabled = ensaio ? false : campo.value.trim().toUpperCase() !== "PUBLICAR";
+  };
+  campo.value = "";
+  if (cx) cx.onchange = pintar;
+  campo.oninput = pintar;
+  pintar();
+  botao.onclick = () => publicar(saidas, ensaio ? cfg.ensaio : null);
+  for (const b of dlg.querySelectorAll("[data-fechar]")) b.onclick = () => dlg.close();
+  dlg.showModal();
+  if (!ensaio) campo.focus();
+}
+
+async function publicar(saidas, canalEnsaio) {
+  const botao = $("#pub-executar");
+  botao.disabled = true;
+  botao.textContent = "publicando…";
+  const feitos = [];
+  const falhas = [];
+  for (const s of saidas) {
+    try {
+      const j = await chamar("mb-touchpoint-envio", {
+        gestor: s.gestor,
+        blocos: s.blocos,
+        periodo: rotuloSemana(S.semana),
+        week_start: S.semana,
+        confirmar: true,
+        ...(canalEnsaio ? { channel_id: canalEnsaio } : {}),
+      });
+      if (j.dry_run) {
+        falhas.push(`${s.gestor}: voltou dry-run — ${j.motivo_dry_run}`);
+      } else if (canalEnsaio) {
+        // Ensaio não conta como semana publicada: o cliente não recebeu nada.
+        feitos.push(s.gestor);
+      } else {
+        // Registrar ANTES de qualquer outra coisa: se o navegador morrer
+        // agora, o que não pode acontecer é a mensagem existir no canal e a
+        // tela achar que não existe. Errar para o lado de "já enviei".
+        registrarEnvio(S.semana, s.gestor, {
+          clientes: j.client_ids ? j.client_ids.length : s.clientes,
+          client_ids: j.client_ids || [],
+          clickup_message_id: j.clickup_message_id || null,
+        });
+        feitos.push(s.gestor);
+      }
+    } catch (e) {
+      falhas.push(`${s.gestor}: ${String(e.message || e)}`);
+    }
+  }
+  $("#dlg-publicar").close();
+  $("#dlg-envio").close();
+  botao.textContent = "Publicar agora";
+  render();
+  const onde = canalEnsaio ? "no canal de ensaio" : "no canal Touchpoints";
+  if (feitos.length && !falhas.length) aviso(`Publicado ${onde}: ${feitos.join(", ")}.`, "info");
+  else if (feitos.length) aviso(`Publicado ${onde}: ${feitos.join(", ")}. Falhou: ${falhas.join(" · ")}`, "warning");
+  else aviso(`Não publicou: ${falhas.join(" · ")}`, "critical");
+}
+
+
+/* ═════════════ diálogo: corrigir números do contrato ═════════════ */
+
+function abrirCorrecao(r) {
+  const dlg = $("#dlg-num");
+  const base = r.payload; // o contrato como o banco devolveu — o "de"
+  const atual = correcaoDe(S.semana, r.client_id) || { campos: {}, motivo: "" };
+  const campos = camposCorrigiveis(base);
+
+  $("#num-cliente").textContent = base.identificacao.cliente;
+  $("#num-motivo").value = atual.motivo || "";
+
+  const grupos = [...new Set(campos.map((c) => c.grupo))];
+  $("#num-campos").innerHTML = grupos
+    .map((g) => {
+      const doGrupo = campos.filter((c) => c.grupo === g);
+      return `<div class="sec"><h3>${esc(g)}</h3>
+        <div style="display:grid;gap:8px">
+          ${doGrupo
+            .map((c) => {
+              const posto = Object.prototype.hasOwnProperty.call(atual.campos, c.id) ? atual.campos[c.id] : c.valor;
+              const doBanco =
+                c.valor === null || c.valor === undefined
+                  ? "—"
+                  : c.tipo === "money"
+                    ? money(c.valor)
+                    : String(c.valor);
+              const entrada =
+                c.tipo === "select"
+                  ? `<select class="box corr" data-id="${esc(c.id)}" data-tipo="select" style="width:100%">
+                       ${c.opcoes
+                         .map(
+                           (o) =>
+                             `<option value="${esc(o.valor)}"${String(posto) === o.valor ? " selected" : ""}>${esc(o.rotulo)}</option>`,
+                         )
+                         .join("")}
+                     </select>`
+                  : `<input type="number" class="corr" data-id="${esc(c.id)}" data-tipo="${c.tipo}"
+                       step="${c.tipo === "money" ? "0.01" : "1"}" ${c.tipo === "int" ? 'min="0"' : ""}
+                       value="${posto === null || posto === undefined ? "" : esc(posto)}"
+                       style="font:inherit;font-size:12.5px;padding:5px 9px;border-radius:8px;
+                              border:1px solid var(--line);background:var(--panel-2);color:var(--ink);width:100%">`;
+              return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 150px 190px;gap:10px;align-items:center">
+                  <span style="font-size:12.5px">${esc(c.rotulo)}</span>
+                  <span class="mono meta" title="valor calculado pelo contrato">banco: ${esc(doBanco)}</span>
+                  ${entrada}
+                </div>`;
+            })
+            .join("")}
+        </div></div>`;
+    })
+    .join("");
+
+  /** O que difere do banco. Digitar o mesmo número não é correção — e não
+   *  pode pintar o bloco de "corrigido à mão" nem exigir motivo. */
+  const coletar = () => {
+    const fora = {};
+    for (const el of dlg.querySelectorAll(".corr")) {
+      const c = campos.find((x) => x.id === el.dataset.id);
+      if (!c) continue;
+      if (el.dataset.tipo === "select") {
+        if (el.value !== String(c.valor)) fora[c.id] = el.value;
+        continue;
+      }
+      if (el.value.trim() === "") continue;
+      const v = el.dataset.tipo === "money" ? r2(el.value) : inteiro(el.value);
+      const antigo = c.valor === null || c.valor === undefined ? null : Number(c.valor);
+      if (antigo === null || Math.abs(v - antigo) > 0.001) fora[c.id] = v;
+    }
+    return fora;
+  };
+
+  const pintar = () => {
+    const n = Object.keys(coletar()).length;
+    $("#num-salvar").textContent = n ? `Salvar ${n} correção(ões)` : "Salvar correção";
+    $("#num-salvar").disabled = n === 0 && !Object.keys(atual.campos).length;
+  };
+  for (const el of dlg.querySelectorAll(".corr")) {
+    el.oninput = pintar;
+    el.onchange = pintar;
+  }
+  pintar();
+
+  $("#num-limpar").onclick = () => {
+    salvarCorrecao(S.semana, r.client_id, null);
+    dlg.close();
+    aviso("Correções descartadas — o bloco voltou aos números do banco.", "info");
+    reescreverSePreciso(r);
+  };
+
+  $("#num-salvar").onclick = () => {
+    const fora = coletar();
+    const motivo = $("#num-motivo").value.trim();
+    if (Object.keys(fora).length && motivo.length < 5) {
+      aviso("Escreva o motivo da correção — ele vai para o CS e para quem conserta o cadastro.", "critical");
+      $("#num-motivo").focus();
+      return;
+    }
+    salvarCorrecao(S.semana, r.client_id, Object.keys(fora).length ? { campos: fora, motivo } : null);
+    dlg.close();
+    reescreverSePreciso(r);
+  };
+
+  for (const b of dlg.querySelectorAll("[data-fechar]")) b.onclick = () => dlg.close();
+  dlg.showModal();
+}
+
+/** Corrigir número muda o texto. Se a régua escreveu, reescreve sozinho — é
+ *  de graça. Se a pessoa escreveu, NÃO sobrescreve: avisa, porque o texto
+ *  ainda cita o número antigo e quem decide a palavra final é ela. */
+function reescreverSePreciso(r) {
+  const d = rascunhoDe(S.semana, r.client_id);
+  if (!d || !d.texto) {
+    render();
+    return;
+  }
+  if (d.origem === "regua") {
+    escrever(r, d.escolhas || {}).catch(() => {});
+    return;
+  }
+  render();
+  const antigos = citaNumeroAntigo(payloadDe(r), textoDe(r).texto);
+  aviso(
+    antigos.length
+      ? `O texto foi editado à mão e ainda cita ${antigos.join(", ")} — o número de antes da correção.`
+      : "Números corrigidos. O texto foi editado à mão, então não foi reescrito — confira.",
+    "warning",
+  );
+}
+
+/* ═════════════ diálogo: enviar para CS ═════════════ */
+
+/** Os blocos que vão para a CS. `escopo` = a semana toda ou só o cliente
+ *  aberto — "finalizar o touchpoint" é as duas coisas dependendo do dia. */
+function blocosCS(escopo) {
+  const porGestor = blocosParaEnvio();
+  if (escopo !== "cliente") return porGestor;
+  const m = new Map();
+  for (const [g, bs] of porGestor) {
+    const f = bs.filter((b) => b.client_id === S.sel);
+    if (f.length) m.set(g, f);
+  }
+  return m;
+}
+
+function abrirCS() {
+  const dlg = $("#dlg-cs");
+  let escopo = "semana";
+  let escolhidas = [];
+
+  const selecionado = S.linhas.find((x) => x.client_id === S.sel);
+  $("#cs-escopo").innerHTML = `
+    <div class="field">
+      <div class="fh"><span class="fl">O que mandar</span></div>
+      <div style="display:grid;gap:6px">
+        <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+          <input type="radio" name="cs-escopo" value="semana" checked>
+          <span>A <b>semana toda</b> — todos os blocos prontos</span></label>
+        <label style="display:flex;gap:8px;align-items:center;cursor:${selecionado ? "pointer" : "not-allowed"};opacity:${selecionado ? 1 : 0.5}">
+          <input type="radio" name="cs-escopo" value="cliente" ${selecionado ? "" : "disabled"}>
+          <span>Só <b>${esc(selecionado ? selecionado.client_name : "o cliente aberto")}</b></span></label>
+      </div>
+    </div>`;
+
+  $("#cs-quem").innerHTML = `
+    <div class="field">
+      <div class="fh"><span class="fl">Para quem</span></div>
+      <div style="display:grid;gap:6px">
+        ${CS.map((c) => {
+          const j = envioCSDe(S.semana, c.id);
+          return `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+            <input type="checkbox" class="cs-quem" value="${c.id}" style="margin-top:3px">
+            <span><b>${esc(c.curto)}</b> <span class="meta">${esc(c.nome)}</span>
+            ${j ? `<span class="chip critical" style="margin-left:6px">já recebeu esta semana · ${new Date(j.em).toLocaleString("pt-BR")}</span>` : ""}
+            </span></label>`;
+        }).join("")}
+      </div>
+    </div>`;
+
+  const corrs = correcoesDaSemana();
+  $("#cs-correcoes").innerHTML = corrs.length
+    ? `<div class="callout" style="background:var(--info-bg);border:1px solid var(--info-bd);margin-bottom:10px">
+         <b style="color:var(--info)">${corrs.length} cliente(s) com número corrigido à mão.</b>
+         A CS recebe a nota interna com o de→para e o motivo. O cliente, não.
+         <ul>${corrs.map((c) => `<li><b>${esc(c.cliente)}</b> — ${esc(c.itens.map(linhaCorrecao).join("; "))}</li>`).join("")}</ul>
+       </div>`
+    : "";
+
+  const pintar = () => {
+    escopo = dlg.querySelector('input[name="cs-escopo"]:checked').value;
+    escolhidas = [...dlg.querySelectorAll(".cs-quem")].filter((x) => x.checked).map((x) => x.value);
+    const porGestor = blocosCS(escopo);
+    const clientes = [...porGestor.values()].reduce((a, b) => a + b.length, 0);
+    $("#cs-resumo").innerHTML = `
+      <div class="mesbox">
+        <span class="lbl">${esc(rotuloSemana(S.semana))}</span>
+        <span>Clientes: <b>${clientes}</b></span>
+        <span>Mensagens por CS: <b>${porGestor.size}</b> (uma por gestor)</span>
+        <span>Gestores: <b>${[...porGestor.keys()].map(esc).join(", ") || "—"}</b></span>
+      </div>`;
+    $("#cs-enviar").disabled = !escolhidas.length || !clientes;
+    $("#cs-enviar").textContent = escolhidas.length
+      ? `Enviar para ${escolhidas.map((i) => CS.find((c) => c.id === i).curto).join(" e ")}`
+      : "Enviar";
+    $("#cs-previa-btn").disabled = !escolhidas.length || !clientes;
+    $("#cs-previa").innerHTML = "";
+  };
+  for (const el of dlg.querySelectorAll('input[name="cs-escopo"], .cs-quem')) el.onchange = pintar;
+  pintar();
+
+  $("#cs-previa-btn").onclick = async () => {
+    const cs = escolhidas[0];
+    const porGestor = blocosCS(escopo);
+    $("#cs-previa").innerHTML = `<p class="meta">montando a prévia…</p>`;
+    const saidas = [];
+    for (const [gestor, blocos] of porGestor) {
+      try {
+        // sem `confirmar` — o mesmo dry-run do canal, só que no destino cs
+        const j = await chamar("mb-touchpoint-envio", {
+          destino: "cs",
+          cs,
+          gestor,
+          blocos,
+          periodo: rotuloSemana(S.semana),
+          week_start: S.semana,
+        });
+        saidas.push({ gestor, mensagem: j.mensagem, caracteres: j.caracteres });
+      } catch (e) {
+        saidas.push({ gestor, erro: String(e.message || e) });
+      }
+    }
+    $("#cs-previa").innerHTML =
+      `<div class="sec"><h3>Prévia — o que ${esc(CS.find((c) => c.id === cs).curto)} vai ler</h3>` +
+      saidas
+        .map((s) =>
+          s.erro
+            ? `<div class="callout critical"><b>${esc(s.gestor)}</b><div class="mono">${esc(s.erro)}</div></div>`
+            : `<div class="field"><div class="fh"><span class="fl">@${esc(s.gestor)}</span>
+                 <span class="fhint">${s.caracteres} caracteres</span></div>
+               <div class="msg">${esc(s.mensagem)}</div></div>`,
+        )
+        .join("") +
+      `</div>`;
+  };
+
+  $("#cs-enviar").onclick = () => enviarParaCS(escolhidas, escopo);
+  for (const b of dlg.querySelectorAll("[data-fechar]")) b.onclick = () => dlg.close();
+  dlg.showModal();
+}
+
+async function enviarParaCS(ids, escopo) {
+  const botao = $("#cs-enviar");
+  const texto = botao.textContent;
+  botao.disabled = true;
+  botao.textContent = "enviando…";
+  const porGestor = blocosCS(escopo);
+  const ok = [];
+  const falhas = [];
+
+  // TRAVA DE VERSÃO. Se esta tela subir antes do workflow atualizado, o n8n
+  // antigo ignora `destino` e cai no `channel_id || clickup_canal` — ou seja,
+  // manda para o canal que o CLIENTE lê, com `confirmar: true` junto. Um
+  // dry-run antes prova que o workflow do outro lado entende `cs` e resolveu
+  // um canal que não é o do cliente. Sem essa prova, não envia nada.
+  try {
+    const [gestor1, blocos1] = [...porGestor][0];
+    const prova = await chamar("mb-touchpoint-envio", {
+      destino: "cs",
+      cs: ids[0],
+      gestor: gestor1,
+      blocos: blocos1,
+      periodo: rotuloSemana(S.semana),
+      week_start: S.semana,
+    });
+    if (prova.destino !== "cs" || !prova.cs_nome || !prova.channel_id) {
+      throw new Error(
+        "o workflow mb-touchpoint-envio ainda é o antigo: não entende destino:cs e mandaria para o canal do cliente. Rode `python n8n/build.py --publicar`.",
+      );
+    }
+  } catch (e) {
+    botao.textContent = texto;
+    botao.disabled = false;
+    aviso("Não enviei nada — " + String(e.message || e), "critical");
+    return;
+  }
+
+  for (const cs of ids) {
+    const quem = CS.find((c) => c.id === cs);
+    let clientes = 0;
+    for (const [gestor, blocos] of porGestor) {
+      try {
+        const j = await chamar("mb-touchpoint-envio", {
+          destino: "cs",
+          cs,
+          gestor,
+          blocos,
+          periodo: rotuloSemana(S.semana),
+          week_start: S.semana,
+          confirmar: true,
+        });
+        if (j.dry_run) falhas.push(`${quem.curto}/${gestor}: voltou dry-run — ${j.motivo_dry_run}`);
+        else clientes += blocos.length;
+      } catch (e) {
+        falhas.push(`${quem.curto}/${gestor}: ${String(e.message || e)}`);
+      }
+    }
+    if (clientes) {
+      registrarEnvioCS(S.semana, cs, { clientes, escopo, mensagens: porGestor.size });
+      ok.push(`${quem.curto} (${clientes})`);
+    }
+  }
+  botao.textContent = texto;
+  botao.disabled = false;
+  $("#dlg-cs").close();
+  render();
+  if (ok.length && !falhas.length) aviso(`Touchpoint enviado para ${ok.join(" e ")}.`, "info");
+  else if (ok.length) aviso(`Enviado para ${ok.join(" e ")}. Falhou: ${falhas.join(" · ")}`, "warning");
+  else aviso(`Não enviou: ${falhas.join(" · ")}`, "critical");
+}
+
+/** O CSV que vai para quem conserta o cadastro. Sem isto a correção morre no
+ *  navegador e volta idêntica na semana seguinte. */
+function baixarCorrecoesCSV() {
+  const linhas = [["semana", "cliente", "client_id", "campo", "de", "para", "motivo", "corrigido_em"]];
+  for (const c of correcoesDaSemana()) {
+    for (const i of c.itens) linhas.push([S.semana, c.cliente, c.client_id, i.rotulo, i.de, i.para, c.motivo, c.em]);
+  }
+  if (linhas.length === 1) return aviso("Nenhuma correção nesta semana.");
+  const csv = linhas
+    .map((l) => l.map((x) => `"${String(x ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `touchpoint-correcoes-${S.semana}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
 /* ═══════════════════════════════ ajustes ═══════════════════════════════ */
@@ -901,11 +1895,17 @@ function abrirEnvio(saidas) {
 function abrirAjustes() {
   $("#in-base").value = cfg.base;
   $("#in-token").value = cfg.token;
+  $("#in-ensaio").value = cfg.ensaio || "";
   $("#dlg-cfg").showModal();
 }
 
 function exportarRascunhos() {
-  const blob = new Blob([JSON.stringify(RASCUNHOS, null, 1)], { type: "application/json" });
+  // Leva as correções junto: sem elas o arquivo descreve um texto que cita
+  // números que não estão em lugar nenhum.
+  const blob = new Blob(
+    [JSON.stringify({ rascunhos: RASCUNHOS, correcoes: CORRECOES, enviados: ENVIADOS, cs: CS_ENVIADOS }, null, 1)],
+    { type: "application/json" },
+  );
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `touchpoint-rascunhos-${S.semana}.json`;
@@ -932,18 +1932,51 @@ function ligar() {
     carregarSemana();
   };
   $("#recarregar").onclick = carregarSemana;
-  $("#f-gestor").oninput = (e) => {
-    S.filtroGestor = e.target.value;
+
+  // Calendário: aceita qualquer dia e cai na SEGUNDA daquela semana — quem
+  // procura "a semana do dia 19" não deveria precisar saber que 19 é terça.
+  $("#f-data").onchange = (e) => {
+    const v = e.target.value;
+    if (!v) return;
+    const alvo = segundaDa(v);
+    if (alvo > ultimaSemanaFechada()) {
+      aviso("A semana corrente nunca entra — só semana fechada.");
+      e.target.value = S.semana;
+      return;
+    }
+    if (alvo === S.semana) return;
+    S.semana = alvo;
+    gravarJSON("tp_semana", S.semana);
+    carregarSemana();
+  };
+
+  const filtro = (id, campo, evento = "onchange") => {
+    $(id)[evento] = (e) => {
+      S[campo] = e.target.value;
+      salvarFiltros();
+      render();
+    };
+  };
+  filtro("#f-busca", "busca", "oninput");
+  filtro("#f-gestor", "gestor");
+  filtro("#f-cenario", "cenario");
+  filtro("#f-estado", "estado");
+  $("#f-limpar").onclick = () => {
+    Object.assign(S, FILTROS_PADRAO);
+    salvarFiltros();
     render();
   };
+
   $("#btn-todos").onclick = escreverTodos;
   $("#btn-envio").onclick = montarEnvio;
+  $("#btn-cs").onclick = abrirCS;
   $("#btn-cfg").onclick = abrirAjustes;
   $("#btn-export").onclick = exportarRascunhos;
   $("#cfg-salvar").onclick = () => {
     cfg.base = $("#in-base").value.trim().replace(/\/$/, "");
     cfg.token = $("#in-token").value.trim();
-    gravarJSON("tp_cfg", { base: cfg.base, token: cfg.token });
+    cfg.ensaio = $("#in-ensaio").value.trim();
+    gravarJSON("tp_cfg", { base: cfg.base, token: cfg.token, ensaio: cfg.ensaio });
     $("#dlg-cfg").close();
     carregarSemana();
   };
