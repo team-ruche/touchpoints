@@ -38,7 +38,7 @@ const mod = await import(
       fonte +
         "\nexport { S, CS, aplicarCorrecoes, camposCorrigiveis, resumoCorrecao, linhaCorrecao," +
         " citaNumeroAntigo, montarMensagem, checklist, salvarCorrecao, correcaoDe, payloadDe," +
-        " temCorrecao, notaInternaDe, correcoesDaSemana, blocosParaEnvio, salvarRascunho, money };",
+        " temCorrecao, notaInternaDe, correcoesDaSemana, blocosParaEnvio, salvarRascunho, money, incoerencias };",
     ).toString("base64")
 );
 
@@ -192,6 +192,26 @@ for (const r of linhas) {
 if (!outro) erro("nenhum cliente fecha sozinho nesta semana — teste não exercitado");
 verdade("bloco sem correção não tem nota_interna", semNota && !("nota_interna" in semNota));
 verdade("notaInternaDe devolve null", mod.notaInternaDe(outro) === null);
+
+/* ── 9b. semana e mês têm de fechar entre si ── */
+console.log("\n9b) correção pela metade");
+let naturais = 0;
+for (const r of linhas) naturais += mod.incoerencias(r.payload).length ? 1 : 0;
+eq("nenhum cliente real já nasce incoerente", naturais, 0);
+const meia = mod.aplicarCorrecoes(alvo.payload, {
+  campos: { [`midia.por_plataforma.${Object.keys(alvo.payload.midia.por_plataforma)[0]}.leads`]: 999 },
+  motivo: "corrigi a semana e esqueci o mês",
+});
+verdade("corrigir a semana sem o mês é pego", mod.incoerencias(meia).length > 0);
+verdade("o checklist reprova", !mod.checklist(meia, escrito).find((c) => c.id === "coerencia").ok);
+const inteira = mod.aplicarCorrecoes(alvo.payload, {
+  campos: {
+    [`midia.por_plataforma.${Object.keys(alvo.payload.midia.por_plataforma)[0]}.leads`]: 999,
+    "mes.leads": 1200,
+  },
+  motivo: "corrigi os dois",
+});
+eq("corrigindo os dois, fecha", mod.incoerencias(inteira).length, 0);
 
 /* ── 10. o Code node GERADO do envio: canal x DM da CS ── */
 console.log("\n10) o workflow de envio, no código que vai para o n8n");

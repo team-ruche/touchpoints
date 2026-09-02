@@ -78,6 +78,12 @@ CLICKUP_CANAL = _env("CLICKUP_CHANNEL_ID")
 CS_DESTINOS = {
     "eduarda": {"nome": "Eduarda Zancanella", "user_id": "88305534", "channel_id": "8cdt0k7-22714"},
     "amanda": {"nome": "Amanda Blaszczyk", "user_id": "88451364", "channel_id": "8cdt0k7-24774"},
+    # Destino de ENSAIO. Não aparece na tela (a lista de lá tem só as duas CS):
+    # existe para exercitar o POST de verdade — cabeçalho de cópia interna,
+    # nota do número corrigido, tudo — sem incomodar a Eduarda ou a Amanda.
+    #
+    #   node ensaio_cs.mjs 2026-08-17
+    "ensaio": {"nome": "Ensaio — Lucas Zuque", "user_id": "94217794", "channel_id": "8cdt0k7-45814"},
 }
 _m = re.search(r'API_KEY\s*=\s*"([^"]+)"', _n)
 N8N_KEY = _m.group(1) if _m else os.environ.get("N8N_API_KEY")

@@ -280,7 +280,8 @@ function camposCorrigiveis(p) {
 
   campos.push({
     id: "cenario.codigo", grupo: "Classificação", tipo: "select",
-    rotulo: "Cenário — o contrato classificou pelo número errado, reclassifique",
+    rotulo: "Cenário",
+    dica: "o contrato classificou pelo número errado — reclassifique",
     valor: p.cenario.codigo,
     opcoes: Object.entries(CENARIO).map(([k, v]) => ({ valor: k, rotulo: `${k} · ${v.titulo}` })),
   });
@@ -404,6 +405,24 @@ function resumoCorrecao(p, c) {
 }
 
 const linhaCorrecao = (x) => `${x.rotulo}: ${x.de} → ${x.para}`;
+
+/** O mês CONTÉM a semana. Corrigir um e esquecer o outro produz um bloco que
+ *  cita dois números que não podem coexistir — o primeiro ensaio da rota da
+ *  CS saiu assim: 9 leads na semana e "os 0 leads do mês" no parágrafo.
+ *
+ *  Nos 88 blocos reais das semanas de 10/08 e 17/08 isto NUNCA dispara
+ *  sozinho, então quando dispara é sempre correção feita pela metade — e por
+ *  isso o diálogo trava o salvar em vez de só avisar. */
+function incoerencias(p) {
+  const fora = [];
+  if (p.mes.leads < p.midia.total.leads)
+    fora.push(`o mês está com ${p.mes.leads} leads e a semana com ${p.midia.total.leads}`);
+  if (p.mes.agendamentos < p.agendamento.semana)
+    fora.push(`o mês está com ${p.mes.agendamentos} agendamentos e a semana com ${p.agendamento.semana}`);
+  if (p.mes.spend < p.midia.total.spend - 0.01)
+    fora.push(`o mês está com ${money(p.mes.spend)} investidos e a semana com ${money(p.midia.total.spend)}`);
+  return fora;
+}
 
 /** Números que existiam ANTES da correção e ainda aparecem no texto. É a
  *  guarda que impede o pior resultado possível desta feature: o gestor
@@ -601,6 +620,11 @@ function checklist(p, texto) {
   } else {
     itens.push({ id: "correcao", label: "Nenhum número foi corrigido à mão", ok: true });
   }
+  itens.push({
+    id: "coerencia",
+    label: "Semana e mês fecham entre si — o mês contém a semana",
+    ok: incoerencias(p).length === 0,
+  });
   return itens;
 }
 
@@ -981,6 +1005,7 @@ function renderCartao() {
   const proib = termosProibidos(`${texto.comoFoi} ${texto.proximoPasso} ${texto.pedido}`);
   const chk = checklist(p, texto);
   const citaAntigo = citaNumeroAntigo(p, texto);
+  const incoerencia = incoerencias(p);
   const mensagem = montarMensagem(p, texto);
   /** Um número do cabeçalho foi corrigido? `sufixo` casa por final de path,
    *  porque o investimento é por plataforma e o total é derivado dele. */
@@ -1148,6 +1173,12 @@ function renderCartao() {
              Enquanto houver <span class="mono">[…]</span> no texto, o envio fica travado — é o comportamento
              correto: a informação não está no banco.
              <div style="margin-top:6px" class="mono">${pend.map(esc).join(" · ")}</div></div>`
+          : ""
+      }
+      ${
+        incoerencia.length
+          ? `<div class="callout critical"><b>Semana e mês não fecham:</b>
+             ${esc(incoerencia.join(" · "))}. Abra <b>Corrigir números</b> e acerte o mês também.</div>`
           : ""
       }
       ${
@@ -1595,7 +1626,9 @@ function abrirCorrecao(r) {
                        style="font:inherit;font-size:12.5px;padding:5px 9px;border-radius:8px;
                               border:1px solid var(--line);background:var(--panel-2);color:var(--ink);width:100%">`;
               return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 150px 190px;gap:10px;align-items:center">
-                  <span style="font-size:12.5px">${esc(c.rotulo)}</span>
+                  <span style="font-size:12.5px">${esc(c.rotulo)}${
+                    c.dica ? `<br><span class="fhint">${esc(c.dica)}</span>` : ""
+                  }</span>
                   <span class="mono meta" title="valor calculado pelo contrato">banco: ${esc(doBanco)}</span>
                   ${entrada}
                 </div>`;
@@ -1625,9 +1658,19 @@ function abrirCorrecao(r) {
   };
 
   const pintar = () => {
-    const n = Object.keys(coletar()).length;
+    const fora = coletar();
+    const n = Object.keys(fora).length;
+    // Roda a correção inteira a cada tecla e checa o resultado: é barato, e
+    // é a única forma de pegar a correção pela metade ANTES de salvar.
+    const inc = incoerencias(n ? aplicarCorrecoes(base, { campos: fora, motivo: "" }) : base);
+    $("#num-incoerencia").innerHTML = inc.length
+      ? `<div class="callout critical" style="margin-bottom:12px"><b>Isso não fecha:</b>
+           <ul>${inc.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+           O mês contém a semana. Corrija o mês também — senão o texto cita dois números
+           que não podem existir juntos.</div>`
+      : "";
     $("#num-salvar").textContent = n ? `Salvar ${n} correção(ões)` : "Salvar correção";
-    $("#num-salvar").disabled = n === 0 && !Object.keys(atual.campos).length;
+    $("#num-salvar").disabled = inc.length > 0 || (n === 0 && !Object.keys(atual.campos).length);
   };
   for (const el of dlg.querySelectorAll(".corr")) {
     el.oninput = pintar;

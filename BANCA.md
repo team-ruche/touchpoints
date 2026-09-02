@@ -148,6 +148,37 @@ O envio ao CS **não conta como semana publicada**: são registros separados, e 
 barra mostra os dois. Ele tem freio de mão próprio (`envio_cs_liberado`), então
 dá para derrubar o envio ao cliente sem derrubar o interno, e vice-versa.
 
+### O ensaio — e o POST que finalmente rodou
+
+`CS_DESTINOS` tem uma terceira chave, `ensaio`, que a tela **não** oferece: ela
+existe para exercitar o POST de verdade sem incomodar a Eduarda ou a Amanda.
+
+```bash
+node ensaio_cs.mjs 2026-08-17            # dry-run, mostra a mensagem
+node ensaio_cs.mjs 2026-08-17 --enviar   # manda para o destino `ensaio`
+```
+
+O script monta dois blocos reais da semana — **um deles com número corrigido à
+mão** — pelo mesmo caminho da tela: contrato do webhook, redação do webhook,
+mensagem do `app.js`. Assim a mensagem de ensaio mostra as duas coisas novas de
+uma vez.
+
+Em **01/09 o ensaio rodou de verdade** (`8cdt0k7-45814`, mensagens
+`80140050972048` e `80140050972050`). É a primeira vez que o node do ClickUp
+publica numa conversa privada — o mesmo tipo de estreia que, no canal, revelou
+o `type` obrigatório da API v3.
+
+### O mês contém a semana
+
+Corrigir a semana e esquecer o mês produz um bloco com dois números que não
+podem coexistir. O primeiro ensaio saiu exatamente assim: **9 leads na semana e
+"os 0 leads do mês"** no parágrafo seguinte.
+
+Nos 88 blocos reais das semanas de 10/08 e 17/08 isso **nunca** acontece
+sozinho — quando acontece, é sempre correção feita pela metade. Por isso o
+diálogo **trava o salvar** (não só avisa) quando o mês fica menor que a semana
+em leads, agendamento ou investimento, e o checklist tem o item correspondente.
+
 ### A trava que impede o pior cenário desta mudança
 
 Se a tela nova subir e o workflow **não**, o n8n antigo ignora `destino` e cai
@@ -219,7 +250,7 @@ python build.py --publicar --com-ia   # idem + a rota de reserva que gasta API
 |---|---|---|---|
 | MB TouchPoint — semana (live, somente leitura) | `JRzjbVbWGdgX6CcG` | `mb-touchpoint-week` | ✅ 200, 44/44 |
 | MB TouchPoint — redação (live) | `5lbJMgNZ9tj0gigY` | `mb-touchpoint-redacao` | ⚠️ **precisa republicar** — os nós mudaram |
-| MB TouchPoint — envio ao ClickUp (live) | `svVZhxutLSPXxDpJ` | `mb-touchpoint-envio` | ⚠️ **precisa republicar** — ganhou o destino `cs` |
+| MB TouchPoint — envio ao ClickUp (live) | `svVZhxutLSPXxDpJ` | `mb-touchpoint-envio` | ✅ publicado com o destino `cs` |
 | MB TouchPoint — redação por IA (live, reserva) | — | `mb-touchpoint-redacao-ia` | gravado em disco, **não publicado** |
 
 A redação mantém **nome e path**, então republicar atualiza o workflow que já existe e a
@@ -273,6 +304,7 @@ node simular_redacao.mjs 2026-08-17  # roda o Code node GERADO, sem Intl no esco
 node testar_app.mjs                # a mensagem final, montada, nos 44 clientes
 node testar_filtros.mjs            # busca, calendário, filtros e registro de envio
 node testar_correcao.mjs         # correção de número e o envio para a CS
+node ensaio_cs.mjs 2026-08-17    # o POST de verdade, no destino de ensaio
 node validar.mjs 2026-08-17 ../gabarito_2026-08-17.json   # o contrato vs. o Python
 node simular_n8n.mjs 2026-08-17 ../gabarito_2026-08-17.json
 node testar_webhooks.mjs 2026-08-17 ../gabarito_2026-08-17.json  # ponta a ponta
@@ -412,6 +444,7 @@ live/
   n8n/build.py           monta e publica os workflows        ⚠️ gera JSON com chave
   src/testar_filtros.mjs   busca, calendário, filtros, registro de envio
   src/testar_correcao.mjs  correção de número, nota interna e o Code node do envio
+  src/ensaio_cs.mjs        manda um touchpoint real para o destino de ensaio
   app/index.html         a tela
   app/app.js             estado, régua dos cenários, léxico, mensagem final
 ```
