@@ -98,7 +98,19 @@ for (const [a, b] of [
   if (c !== t) erro(`contrato.js diz "${c}" e app.js diz "${t}" para ${a}..${b}`);
   else console.log(`  ✓ ${a}..${b} → ${c}`);
 }
-eq("a semana fechada mantém o rótulo de 16 semanas", rotuloPeriodo("2026-08-17", "2026-08-23"), "Mon, 08/17 to Sun, 08/23");
+/* O rótulo virou dd/mm em 02/09/2026. Ele saía em mm/dd com o dia da semana
+   em inglês ("17/08 a 23/08") enquanto TODO o resto da mensagem
+   saía em dd/mm — a data do "Próximo passo", a de validar uma otimização, o
+   bloco do mês. Dois formatos na mesma mensagem fazem "08/09" ser lido como
+   9 de agosto: número certo, leitura falsa. */
+eq("o rótulo é dd/mm nas duas pontas", rotuloPeriodo("2026-08-17", "2026-08-23"), "17/08 a 23/08");
+eq("e num recorte livre também", rotuloPeriodo("2026-08-25", "2026-09-01"), "25/08 a 01/09");
+ok(
+  "nenhum rótulo sobrou em inglês ou em mm/dd",
+  !/Mon|Tue|Wed|Thu|Fri|Sat|Sun| to /.test(
+    [rotuloPeriodo("2026-08-17", "2026-08-23"), rotuloPeriodo("2026-01-01", "2026-12-31")].join(" "),
+  ),
+);
 
 /* ═══ 3. o benchmark é fatiado, e 7 dias não muda nada ═══════════════ */
 console.log("\n3) benchmark proporcional");
@@ -473,18 +485,18 @@ console.log("\n9) cabeçalho do canal");
   };
   const bloco1 = [{ client_id: "c1", cliente: "#001 TESTE", message_text: "Olá.\nAd Spend: $1.00" }];
 
-  const semana = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "Mon, 08/17 to Sun, 08/23", week_start: "2026-08-17" });
-  ok("semana fechada mantém 'Weekly Touchpoints'", semana.mensagem.includes("📋 **Weekly Touchpoints — Mon, 08/17 to Sun, 08/23**"), semana.mensagem.split("\n")[2]);
+  const semana = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "17/08 a 23/08", week_start: "2026-08-17" });
+  ok("semana fechada mantém 'Weekly Touchpoints'", semana.mensagem.includes("📋 **Weekly Touchpoints — 17/08 a 23/08**"), semana.mensagem.split("\n")[2]);
 
-  const semanaExplicita = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "Mon, 08/17 to Sun, 08/23", week_start: "2026-08-17", week_end: "2026-08-23" });
+  const semanaExplicita = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "17/08 a 23/08", week_start: "2026-08-17", week_end: "2026-08-23" });
   ok("segunda a domingo explícito também é semana", semanaExplicita.mensagem.includes("Weekly Touchpoints"));
 
-  const livre = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "Tue, 08/25 to Tue, 09/01", week_start: "2026-08-25", week_end: "2026-09-01" });
+  const livre = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "25/08 a 01/09", week_start: "2026-08-25", week_end: "2026-09-01" });
   ok("recorte livre NÃO diz Weekly", !livre.mensagem.includes("Weekly"), livre.mensagem.split("\n")[2]);
-  ok("e mantém o resto do cabeçalho", livre.mensagem.includes("📋 **Touchpoints — Tue, 08/25 to Tue, 09/01**"), livre.mensagem.split("\n")[2]);
+  ok("e mantém o resto do cabeçalho", livre.mensagem.includes("📋 **Touchpoints — 25/08 a 01/09**"), livre.mensagem.split("\n")[2]);
   ok("o bloco do cliente não muda", livre.mensagem.includes("**Cliente: #001 TESTE**"));
 
-  const cs = await chamar({ destino: "cs", cs: "eduarda", gestor: "Fulano", blocos: bloco1, periodo: "Tue, 08/25 to Tue, 09/01", week_start: "2026-08-25", week_end: "2026-09-01" });
+  const cs = await chamar({ destino: "cs", cs: "eduarda", gestor: "Fulano", blocos: bloco1, periodo: "25/08 a 01/09", week_start: "2026-08-25", week_end: "2026-09-01" });
   ok("a cópia da CS nunca disse Weekly e continua assim", !cs.mensagem.includes("Weekly") && cs.mensagem.includes("🔒 **Touchpoints —"));
 }
 

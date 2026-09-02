@@ -121,15 +121,17 @@ function somaSemanas(ws, n) {
   d.setDate(d.getDate() + n * 7);
   return iso(d);
 }
-const DOW_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/** "Mon, 08/17 to Sun, 08/23" — o mesmo rótulo que o canal usa há 16 semanas.
- *  Num recorte livre o dia da semana é o de verdade das duas pontas.
+/** "17/08 a 23/08" — dd/mm nas duas pontas.
+ *
+ *  Até 02/09/2026 esta linha saía em padrão americano ("Mon, 08/17 to Sun,
+ *  08/23") enquanto TODO o resto da mensagem saía em dd/mm. Dois formatos na
+ *  mesma mensagem fazem "08/09" ser lido como 9 de agosto: número certo,
+ *  leitura falsa — a mesma família do defeito que originou o projeto.
  *  ⚠️ `src/contrato.js` tem a mesma função (arquivos separados, sem import):
- *  mexeu aqui, mexa lá — `testar_app.mjs` compara as duas. */
+ *  mexeu aqui, mexa lá — `testar_periodo.mjs` compara as duas. */
 function rotuloPeriodo(ini, fim) {
-  const f = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}`;
-  return `${DOW_EN[diaDaSemanaDe(ini)]}, ${f(ini)} to ${DOW_EN[diaDaSemanaDe(fim)]}, ${f(fim)}`;
+  const f = (s) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+  return `${f(ini)} a ${f(fim)}`;
 }
 function rotuloSemana(ws) {
   return rotuloPeriodo(ws, domingoDa(ws));
@@ -501,11 +503,18 @@ function citaNumeroAntigo(p, texto) {
 function rascunhoDeTexto(p) {
   const t = p.midia.total, ag = p.agendamento, bm = p.benchmark, opt = p.contexto_mb[0];
   const meta = ag.meta_usada != null ? Math.round(ag.meta_usada) : null;
-  const noMes =
-    `No mês são ${p.mes.leads} leads e ${ag.mes_ate_domingo} agendamentos` +
-    (meta != null
-      ? `, contra a meta de ${meta} agendamentos${ag.origem_meta === "benchmark" ? " (referência do nicho — este cliente não tem meta contratada)" : ""}.`
-      : ".");
+  /* O mês só entra em prosa quando ele CONTÉM o período — a mesma regra que
+     `redacao.js` já seguia e que o esqueleto não seguia. Num recorte que
+     atravessa a virada (26/08 a 01/09) o mês do contrato é 01/09 a 01/09, e
+     escrever "No mês são 0 leads" logo abaixo de "3 leads" põe dois números
+     que não podem coexistir na mesma frase. Número certo, rótulo falso. */
+  const mesContemPeriodo = !p.mes.inicio || p.mes.inicio <= p.semana.inicio;
+  const noMes = !mesContemPeriodo
+    ? ""
+    : `No mês são ${p.mes.leads} leads e ${ag.mes_ate_domingo} agendamentos` +
+      (meta != null
+        ? `, contra a meta de ${meta} agendamentos${ag.origem_meta === "benchmark" ? " (referência do nicho — este cliente não tem meta contratada)" : ""}.`
+        : ".");
   const prazo = opt?.validar_em ? `a leitura confiável é ${dia(opt.validar_em)}` : "[data de leitura]";
 
   switch (p.cenario.codigo) {
@@ -596,24 +605,16 @@ function partesMensagem(p, texto, todosOsCampos) {
 
   // Agendamento REAL do período. Antes esta linha imprimia a meta contratada.
   l.push(`📅 Agendamentos ${p.semana.padrao === false ? "no período" : "na semana"}: ${p.agendamento.semana}`);
-  l.push("");
 
-  const meta = p.agendamento.meta_usada != null ? Math.round(p.agendamento.meta_usada) : null;
-  l.push(`📊 No mês (${dia(p.mes.inicio)} a ${dia(p.mes.fim)}):`);
-  l.push(`• Leads: ${p.mes.leads}`);
-  // CORREÇÃO em cima do model.ts da Fase 4: lá esta linha escrevia
-  // "de N contratados" sempre, inclusive quando N vem do benchmark do nicho
-  // porque o cliente NÃO TEM meta contratada — 17 dos 44 blocos da semana de
-  // 17/08. É o mesmo erro que originou o projeto: número certo, rótulo falso.
-  // A régua da IA (regra 6) já distinguia; só a mensagem final não distinguia.
-  l.push(
-    `• Agendamentos: ${p.mes.agendamentos}` +
-      (meta == null
-        ? ""
-        : p.agendamento.origem_meta === "contrato"
-          ? ` de ${meta} contratados`
-          : ` de ${meta} — referência para a sua vertical`),
-  );
+  /* O bloco "📊 No mês (dd/mm a dd/mm)" saiu da mensagem em 02/09/2026, a
+     pedido de quem usa a tela. Ele repetia em números crus o que a prosa do
+     "Como foi" já diz interpretado (quanto falta para fechar o mês) e, num
+     recorte que atravessa a virada, imprimia um mês de 1 dia logo abaixo de
+     um período de 8 — "No mês (01/09 a 01/09): Leads: 0" embaixo de 3 leads.
+     O mês continua VISÍVEL na tela, para quem escreve; o que ele não é mais
+     é linha da mensagem. A regra do contrato não mudou: o mês continua sendo
+     o do último dia do recorte, e `incoerencias()` continua conferindo que o
+     mês contém o período. */
   const partes = [
     { tipo: "fixo", texto: l.join("\n") },
     { tipo: "campo", k: "comoFoi", rotulo: "Como foi:", dica: "máx. 2 frases", linhas: 4, valor: texto.comoFoi.trim() },
@@ -633,17 +634,148 @@ function partesMensagem(p, texto, todosOsCampos) {
   return partes;
 }
 
-function montarMensagem(p, texto) {
+/**
+ * A mensagem inteira, em texto.
+ *
+ * `livre` é a mensagem editada à MÃO por inteiro (ver "modo livre" abaixo).
+ * Quando ela existe, é ela que sai — e sai por AQUI, que é o único lugar de
+ * onde o copiar, o envio ao canal e o envio à CS tiram o texto. Duas
+ * montagens diferentes seriam a forma mais fácil de o gestor revisar um
+ * texto e o cliente receber outro.
+ */
+function montarMensagem(p, texto, livre) {
+  if (livre != null) return String(livre);
   return partesMensagem(p, texto)
     .map((x) => (x.tipo === "fixo" ? x.texto : `${x.rotulo}\n${x.valor}`))
     .join("\n\n");
 }
 
+/* ───────────── modo livre: a mensagem inteira editável ─────────────
+ *
+ * Até 02/09/2026 só os três campos de texto eram editáveis, e o cabeçalho
+ * (investimento, leads, CPL, agendamento) vinha do contrato sem passar pela
+ * mão de ninguém — era ISSO que garantia que nenhum número da mensagem
+ * nascia na tela. Abrir a mensagem inteira é abrir mão dessa garantia
+ * estrutural, então ela vira uma CONFERÊNCIA: as funções abaixo são a porta
+ * para a tela do teste 5 do `testar_redacao.mjs` — todo número que aparece
+ * no texto tem de existir no contrato.
+ *
+ * A conferência AVISA, não trava. Quem pediu a mensagem editável pediu para
+ * poder escrever o que precisa, e travar aqui seria devolver a decisão para
+ * a máquina depois de o humano ter pedido o contrário. O que continua
+ * travando é o marcador `[…]`, porque ali a informação realmente não existe
+ * — e essa trava também é do lado do servidor.
+ */
+
+/** Todo número que existe no contrato, em todas as formas com que ele pode
+ *  aparecer escrito (2 casas, arredondado, teto). */
+function numerosDoContrato(o, acc) {
+  acc = acc || new Set();
+  if (o === null || o === undefined) return acc;
+  if (typeof o === "number") {
+    acc.add(o.toFixed(2));
+    acc.add(String(Math.round(o)));
+    acc.add(String(Math.ceil(o)));
+    return acc;
+  }
+  if (typeof o === "object") for (const k of Object.keys(o)) numerosDoContrato(o[k], acc);
+  return acc;
+}
+
+/** Números CALCULADOS a partir do contrato que o texto usa de verdade — cada
+ *  um com a conta explícita. Nada entra aqui sem justificativa. */
+function derivadosDoContrato(p) {
+  const s = new Set();
+  const t = p.midia.total;
+  const ag = p.agendamento;
+  if (ag.semana > 0) s.add((t.spend / ag.semana).toFixed(2)); // custo por agendamento
+  if (ag.meta_usada != null) {
+    const falta = Math.round(ag.meta_usada) - p.mes.agendamentos; // quanto falta no mês
+    s.add(String(falta));
+    s.add(falta.toFixed(2));
+  }
+  return s;
+}
+
+/** Números que são prosa, não dado ("em até 10 minutos", "2 a 3 semanas").
+ *  Declarados de propósito: qualquer OUTRO número fora do contrato aparece. */
+const CONSTANTES_DE_PROSA = new Set(["0", "1", "2", "3", "10"]);
+
+/** Extrai todo número de um texto, já descontando as datas dd/mm. */
+function numerosDoTexto(txt) {
+  const achados = [];
+  let s = String(txt);
+  // money primeiro: senão o separador de milhar vira dois inteiros soltos
+  s = s.replace(/\$(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})/g, (bruto, i, d) => {
+    achados.push({ valor: Number(i.replace(/,/g, "") + "." + d).toFixed(2), bruto });
+    return " ";
+  });
+  s = s.replace(/\b\d{1,2}\/\d{1,2}\b/g, " "); // datas dd/mm
+  s = s.replace(/\b(\d+)º/g, (bruto, n) => {
+    achados.push({ valor: String(Number(n)), bruto });
+    return " ";
+  });
+  s.replace(/\b\d+\b/g, (m) => {
+    achados.push({ valor: String(Number(m)), bruto: m });
+    return m;
+  });
+  return achados;
+}
+
+/** Os números do texto que NÃO existem no contrato, na forma em que foram
+ *  escritos — é o que a tela mostra para o gestor conferir. */
+function numerosForaDoContrato(p, txt) {
+  const permitidos = numerosDoContrato(p);
+  for (const d of derivadosDoContrato(p)) permitidos.add(d);
+  const fora = [];
+  const vistos = new Set();
+  for (const n of numerosDoTexto(txt)) {
+    if (permitidos.has(n.valor)) continue;
+    if (permitidos.has(Number(n.valor).toFixed(2))) continue;
+    if (CONSTANTES_DE_PROSA.has(n.valor)) continue;
+    if (vistos.has(n.bruto)) continue;
+    vistos.add(n.bruto);
+    fora.push(n.bruto);
+  }
+  return fora;
+}
+
+/** Recorta uma seção da mensagem pelo rótulo dela. No modo livre não existem
+ *  mais três campos, mas "🚀 Próximo passo:" continua sendo uma seção — e é
+ *  nela que a data tem de estar. Apagar o rótulo reprova o item do checklist,
+ *  que é a leitura certa: sem a seção, não há prazo declarado. */
+function secaoDaMensagem(msg, rotulo, ate) {
+  const i = String(msg).indexOf(rotulo);
+  if (i < 0) return "";
+  const resto = String(msg).slice(i + rotulo.length);
+  let fim = resto.length;
+  for (const r of ate) {
+    const j = resto.indexOf(r);
+    if (j >= 0 && j < fim) fim = j;
+  }
+  return resto.slice(0, fim);
+}
+
+/** Os três campos como o checklist e o léxico os enxergam, venham eles dos
+ *  campos ou de uma mensagem editada por inteiro. */
+function camposEfetivos(texto, livre) {
+  if (livre == null) return texto;
+  return {
+    comoFoi: secaoDaMensagem(livre, "Como foi:", ["🚀", "🤝"]),
+    proximoPasso: secaoDaMensagem(livre, "🚀 Próximo passo:", ["🤝"]),
+    pedido: secaoDaMensagem(livre, "🤝 O que precisamos de você:", []),
+  };
+}
+
 /* ─────────────── checklist antes de publicar (seção 8.8) ─────────────── */
 
-function checklist(p, texto) {
+function checklist(p, texto, livre) {
+  // No modo livre não há mais três campos — há seções dentro de um texto só.
+  // `camposEfetivos` recorta as seções pelo rótulo, e todo item abaixo passa
+  // a valer igual nos dois modos.
+  const c = camposEfetivos(texto, livre);
   const temData = /\b\d{1,2}[/-]\d{1,2}\b|segunda|terça|quarta|quinta|sexta|amanhã|semana que vem/i.test(
-    texto.proximoPasso,
+    c.proximoPasso,
   );
   const plats = Object.entries(p.midia.por_plataforma);
   const t = p.midia.total;
@@ -657,7 +789,10 @@ function checklist(p, texto) {
       ok: Object.keys(p.proveniencia ?? {}).length > 0 },
     { id: "contrato", label: "Nenhum número veio de campo de contrato disfarçado de resultado",
       ok: (p.agendamento.criterio_data ?? "").includes("occurred_at") },
-    { id: "mes", label: `Agendamento ${rec} e acumulado do mês estão presentes`,
+    // O bloco "No mês" saiu da mensagem em 02/09 — o número continua tendo de
+    // existir, porque a prosa do "Como foi" o interpreta, mas ele agora é
+    // conferência de tela, não linha publicada.
+    { id: "mes", label: `Agendamento ${rec} impresso; o acumulado do mês fica só na tela`,
       ok: p.agendamento.semana != null && p.agendamento.mes_ate_domingo != null },
     { id: "zerada", label: "Só aparecem plataformas com investimento > 0",
       ok: plats.every(([, m]) => m.spend > 0) },
@@ -665,9 +800,9 @@ function checklist(p, texto) {
       ok: t.leads === 0 || t.cpl == null || Math.abs(t.cpl - t.spend / t.leads) < 0.02 },
     { id: "cenario", label: "O cenário foi decidido pelo dado, não pelo texto", ok: true },
     { id: "data", label: "Existe uma data no “Próximo passo”", ok: temData },
-    { id: "pedido", label: "Existe o bloco “O que precisamos de você”", ok: texto.pedido.trim().length > 0 },
+    { id: "pedido", label: "Existe o bloco “O que precisamos de você”", ok: c.pedido.trim().length > 0 },
     { id: "lexico", label: "Nenhuma palavra proibida do léxico aparece no texto",
-      ok: termosProibidos(`${texto.comoFoi} ${texto.proximoPasso} ${texto.pedido}`).length === 0 },
+      ok: termosProibidos(`${c.comoFoi} ${c.proximoPasso} ${c.pedido}`).length === 0 },
     { id: "acao", label: "A ação citada corresponde a uma otimização registrada na conta",
       ok: p.contexto_mb.length > 0, manual: true },
   ];
@@ -683,7 +818,7 @@ function checklist(p, texto) {
     itens.push({
       id: "texto_corrigido",
       label: "O texto não repete nenhum número de antes da correção",
-      ok: citaNumeroAntigo(p, texto).length === 0,
+      ok: citaNumeroAntigo(p, c).length === 0,
     });
   } else {
     itens.push({ id: "correcao", label: "Nenhum número foi corrigido à mão", ok: true });
@@ -693,12 +828,26 @@ function checklist(p, texto) {
     label: `${p.semana.padrao === false ? "Período" : "Semana"} e mês fecham entre si — o mês contém ${recorte}`,
     ok: incoerencias(p).length === 0,
   });
+  // Enquanto só os três campos eram editáveis, "nenhum número nasce na tela"
+  // era garantido pela estrutura: o cabeçalho vinha do contrato e ninguém
+  // digitava dentro dele. Com a mensagem inteira aberta, a garantia vira
+  // este item — e ele confere TODO número, inclusive os do cabeçalho.
+  if (livre != null) {
+    const fora = numerosForaDoContrato(p, livre);
+    itens.push({
+      id: "numeros_livres",
+      label: fora.length
+        ? `Mensagem editada por inteiro — ${fora.length} número(s) fora do contrato: ${fora.join(", ")}`
+        : "Mensagem editada por inteiro — todo número dela existe no contrato",
+      ok: fora.length === 0,
+    });
+  }
   return itens;
 }
 
 /** Marcadores `[…]` que sobraram. A tela não deixa enviar com eles. */
-function pendencias(texto) {
-  const all = `${texto.comoFoi}\n${texto.proximoPasso}\n${texto.pedido}`;
+function pendencias(texto, livre) {
+  const all = livre != null ? String(livre) : `${texto.comoFoi}\n${texto.proximoPasso}\n${texto.pedido}`;
   return [...all.matchAll(/\[[^\]]+\]/g)].map((m) => m[0]);
 }
 
@@ -779,6 +928,75 @@ function enviosDaSemana(ws) {
   return Object.entries(ENVIADOS)
     .filter(([k]) => k.startsWith(ws + "|"))
     .map(([k, v]) => ({ gestor: k.slice(ws.length + 1), ...v }));
+}
+
+/* ───────────── quem entra no envio: a seleção ─────────────
+ *
+ * O FILTRO continua sem mandar no envio. Filtrar é para revisar, e uma busca
+ * esquecida na caixa fazendo um cliente sumir do envio sem ninguém perceber
+ * é o pior resultado possível desta tela. Quem decide quem vai é esta lista,
+ * que aparece marcada ao lado de cada cliente e é conferida no diálogo de
+ * envio, com o nome de quem ficou de fora escrito na tela.
+ *
+ * Ausência de seleção (null) = todos os prontos, que é o comportamento de
+ * antes. Seleção VAZIA (Set de tamanho 0) é diferente: é "desmarquei todo
+ * mundo", e o envio fica desabilitado em vez de mandar a semana inteira.
+ * Guardar as duas coisas em campos diferentes é o que impede um clique de
+ * "Nenhum" virar silenciosamente um envio para 42 clientes. */
+let SELECAO = lerJSON("tp_selecao", {});
+
+/** null = todos os prontos. Set = exatamente estes ids. */
+function selecaoDaSemana() {
+  const v = SELECAO[chaveP()];
+  return Array.isArray(v) ? new Set(v) : null;
+}
+
+function gravarSelecao(set) {
+  const k = chaveP();
+  if (set === null) delete SELECAO[k];
+  else SELECAO[k] = [...set];
+  if (!gravarJSON("tp_selecao", SELECAO)) aviso("Não consegui gravar a seleção neste navegador.");
+}
+
+/** Os clientes que TÊM bloco enviável: com texto e sem marcador sobrando. */
+function idsEnviaveis() {
+  return S.linhas.filter((r) => ["pronto", "editado"].includes(estadoDe(r))).map((r) => r.client_id);
+}
+
+/** Os que de fato entram no envio agora. */
+function idsSelecionados() {
+  const sel = selecaoDaSemana();
+  const prontos = idsEnviaveis();
+  return sel === null ? prontos : prontos.filter((id) => sel.has(id));
+}
+
+const estaSelecionado = (cid) => {
+  const sel = selecaoDaSemana();
+  return sel === null || sel.has(cid);
+};
+
+/** Prontos que ficaram de fora. É o que o diálogo de envio nomeia antes de
+ *  publicar: some da mensagem, mas não some da tela. */
+function idsForaDaSelecao() {
+  const dentro = new Set(idsSelecionados());
+  return idsEnviaveis().filter((id) => !dentro.has(id));
+}
+
+function alternarSelecao(cid) {
+  const sel = selecaoDaSemana() || new Set(idsEnviaveis());
+  if (sel.has(cid)) sel.delete(cid);
+  else sel.add(cid);
+  // marcar todo mundo de volta é o mesmo que não ter seleção nenhuma
+  gravarSelecao(idsEnviaveis().every((id) => sel.has(id)) ? null : sel);
+}
+
+/** Marca exatamente os clientes que o filtro está mostrando. É a ponte
+ *  EXPLÍCITA entre filtrar e enviar: filtre por gestor, clique aqui, e o
+ *  envio passa a ser daquele gestor — por decisão, não por efeito colateral. */
+function selecionarVisiveis() {
+  const vis = new Set(visiveis().map((r) => r.client_id));
+  const alvo = new Set(idsEnviaveis().filter((id) => vis.has(id)));
+  gravarSelecao(idsEnviaveis().every((id) => alvo.has(id)) ? null : alvo);
 }
 
 /** As CS que recebem o touchpoint na conversa privada do ClickUp.
@@ -888,8 +1106,47 @@ function textoDe(r) {
       origem: d.origem || "rascunho",
       lacunas: d.lacunas || [],
       escolhas: d.escolhas || {},
+      // `livre` só vale quando o modo está LIGADO; `livreGuardado` sobrevive
+      // ao desligar, para que voltar aos campos não jogue fora a mensagem
+      // que a pessoa escreveu à mão.
+      livre: d.livre && d.livre.ativo ? String(d.livre.mensagem ?? "") : null,
+      livreGuardado: d.livre ? String(d.livre.mensagem ?? "") : null,
     };
-  return { texto: rascunhoDeTexto(payloadDe(r)), origem: "esqueleto", lacunas: [], escolhas: {} };
+  return {
+    texto: rascunhoDeTexto(payloadDe(r)),
+    origem: "esqueleto", lacunas: [], escolhas: {}, livre: null, livreGuardado: null,
+  };
+}
+
+/** Liga ou desliga o modo livre sem perder nenhum dos dois lados: os três
+ *  campos continuam guardados enquanto a mensagem inteira é editada, e a
+ *  mensagem inteira continua guardada quando se volta aos campos. */
+function ligarModoLivre(r, ativo) {
+  const d = rascunhoDe(chaveP(), r.client_id) || {};
+  const { texto, origem, lacunas, escolhas, livreGuardado } = textoDe(r);
+  const mensagem = ativo
+    ? (livreGuardado != null ? livreGuardado : montarMensagem(payloadDe(r), texto))
+    : livreGuardado;
+  salvarRascunho(chaveP(), r.client_id, {
+    ...d, texto, origem, lacunas, escolhas,
+    livre: mensagem == null ? null : { ativo, mensagem },
+  });
+}
+
+function salvarMensagemLivre(r, mensagem) {
+  const d = rascunhoDe(chaveP(), r.client_id) || {};
+  const { texto, origem, lacunas, escolhas } = textoDe(r);
+  salvarRascunho(chaveP(), r.client_id, {
+    ...d, texto, origem, lacunas, escolhas, livre: { ativo: true, mensagem },
+  });
+}
+
+/** Joga fora a mensagem editada à mão e volta para o texto montado pelos
+ *  campos. Separado do "desligar" de propósito: desligar é reversível. */
+function descartarMensagemLivre(r) {
+  const d = rascunhoDe(chaveP(), r.client_id) || {};
+  const { texto, origem, lacunas, escolhas } = textoDe(r);
+  salvarRascunho(chaveP(), r.client_id, { ...d, texto, origem, lacunas, escolhas, livre: null });
 }
 
 /* ═══════════════════════════════ render ═══════════════════════════════ */
@@ -926,8 +1183,48 @@ function pintarAplicar() {
 function render() {
   renderBarra();
   renderStrip();
+  renderSelecao();
   renderLista();
   renderCartao();
+}
+
+/** A barra de seleção, em cima da lista. Ela existe para que a resposta a
+ *  "quem vai receber quando eu clicar em enviar?" esteja escrita na tela
+ *  antes do clique, e não dentro de um diálogo depois dele. */
+function renderSelecao() {
+  const el = $("#selbar");
+  if (!el) return;
+  const prontos = idsEnviaveis();
+  const sel = idsSelecionados();
+  const manual = selecaoDaSemana() !== null;
+  if (!prontos.length) {
+    el.innerHTML = `<span class="meta">nenhum bloco pronto para enviar ainda</span>`;
+    return;
+  }
+  el.innerHTML = `
+    <span><b>${sel.length}</b> de ${prontos.length} ${prontos.length === 1 ? "pronto vai" : "prontos vão"} no envio</span>
+    ${
+      manual
+        ? `<span class="chip info">seleção manual</span>`
+        : `<span class="chip">todos</span>`
+    }
+    <span class="selacoes">
+      <button class="ghost" id="sel-todos"${manual ? "" : " disabled"}>Todos</button>
+      <button class="ghost" id="sel-visiveis" title="marca exatamente os clientes que o filtro está mostrando">Só os visíveis</button>
+      <button class="ghost" id="sel-nenhum"${sel.length ? "" : " disabled"}>Nenhum</button>
+    </span>`;
+  $("#sel-todos").onclick = () => {
+    gravarSelecao(null);
+    render();
+  };
+  $("#sel-visiveis").onclick = () => {
+    selecionarVisiveis();
+    render();
+  };
+  $("#sel-nenhum").onclick = () => {
+    gravarSelecao(new Set());
+    render();
+  };
 }
 
 function renderBarra() {
@@ -971,6 +1268,12 @@ function renderBarra() {
   $("#f-estado").value = S.estado;
   $("#f-limpar").disabled = !filtrosAtivos();
 
+  // O botão diz quantos clientes ele vai mandar. Sem isso, "Revisar e enviar"
+  // é um botão que só revela o tamanho do que faz depois de aberto.
+  const nEnvio = idsSelecionados().length;
+  $("#btn-envio").textContent = nEnvio ? `Revisar e enviar — ${nEnvio} cliente(s)` : "Revisar e enviar";
+  $("#btn-envio").disabled = !nEnvio;
+
   const envs = enviosDaSemana(chaveP());
   const csEnv = CS.filter((c) => envioCSDe(chaveP(), c.id));
   $("#envio-estado").innerHTML =
@@ -994,8 +1297,8 @@ function renderStrip() {
     vermelho: "bloqueados",
   };
   const prontos = S.linhas.filter((r) => {
-    const { texto } = textoDe(r);
-    return r.pode_gerar && pendencias(texto).length === 0;
+    const { texto, livre } = textoDe(r);
+    return r.pode_gerar && pendencias(texto, livre).length === 0;
   }).length;
   $("#strip").innerHTML =
     ["verde", "amarelo", "laranja", "vermelho"]
@@ -1031,9 +1334,9 @@ function estadoDe(r) {
   if (!r.pode_gerar) return "bloqueado";
   const d = rascunhoDe(chaveP(), r.client_id);
   if (!d || !d.texto) return "sem-texto";
-  const { texto, origem } = textoDe(r);
-  if (pendencias(texto).length) return "pendente";
-  return origem === "rascunho" ? "editado" : "pronto";
+  const { texto, origem, livre } = textoDe(r);
+  if (pendencias(texto, livre).length) return "pendente";
+  return livre != null || origem === "rascunho" ? "editado" : "pronto";
 }
 
 /** Busca por nome ou por número do cliente. `#202`, `202` e `flooring` acham
@@ -1077,18 +1380,37 @@ function renderLista() {
   $("#list").innerHTML = vs.length
     ? vs
         .map((r) => {
-          const marca = (temCorrecao(r) ? "≠" : "") + (MARCA_ESTADO[estadoDe(r)] || "");
-          return `<button class="row" role="option" data-id="${r.client_id}" aria-current="${S.sel === r.client_id}"
-            title="${esc(r.client_name)} · cenário ${r.cenario} · ${estadoDe(r)}">
-            <span class="dot ${r.semaforo}"></span>
-            <span class="nm">${esc(r.client_name)}</span>
-            <span class="cen">${marca}${r.cenario}</span></button>`;
+          const est = estadoDe(r);
+          const marca = (temCorrecao(r) ? "≠" : "") + (MARCA_ESTADO[est] || "");
+          // Só quem tem bloco enviável pode ser marcado. Bloqueado, sem texto
+          // ou com marcador sobrando aparece com a caixa apagada e o motivo
+          // no title — some do envio de qualquer jeito, e sumir sem dizer por
+          // que é o que faz alguém procurar o cliente no canal depois.
+          const podeIr = est === "pronto" || est === "editado";
+          const marcado = podeIr && estaSelecionado(r.client_id);
+          return `<div class="rowwrap${marcado ? " on" : ""}">
+            <input type="checkbox" class="pick" data-pick="${r.client_id}"
+              ${marcado ? "checked" : ""} ${podeIr ? "" : "disabled"}
+              aria-label="incluir ${esc(r.client_name)} no envio"
+              title="${podeIr ? "entra no envio" : `não entra no envio — ${est}`}">
+            <button class="row" role="option" data-id="${r.client_id}" aria-current="${S.sel === r.client_id}"
+              title="${esc(r.client_name)} · cenário ${r.cenario} · ${est}">
+              <span class="dot ${r.semaforo}"></span>
+              <span class="nm">${esc(r.client_name)}</span>
+              <span class="cen">${marca}${r.cenario}</span></button>
+          </div>`;
         })
         .join("")
     : `<div class="meta" style="padding:14px">Nenhum cliente com esse filtro.</div>`;
   for (const b of document.querySelectorAll("#list .row")) {
     b.onclick = () => {
       S.sel = b.dataset.id;
+      render();
+    };
+  }
+  for (const c of document.querySelectorAll("#list .pick")) {
+    c.onchange = () => {
+      alternarSelecao(c.dataset.pick);
       render();
     };
   }
@@ -1131,11 +1453,15 @@ function renderCartao() {
   const ag = p.agendamento;
   const bm = p.benchmark;
   const cen = CENARIO[p.cenario.codigo] || CENARIO.X;
-  const { texto, origem, lacunas, escolhas } = textoDe(r);
-  const pend = pendencias(texto);
-  const proib = termosProibidos(`${texto.comoFoi} ${texto.proximoPasso} ${texto.pedido}`);
-  const chk = checklist(p, texto);
-  const citaAntigo = citaNumeroAntigo(p, texto);
+  const { texto, origem, lacunas, escolhas, livre, livreGuardado } = textoDe(r);
+  // No modo livre tudo abaixo passa a ler a mensagem inteira em vez dos três
+  // campos — inclusive o léxico e a conferência de número.
+  const campos = camposEfetivos(texto, livre);
+  const pend = pendencias(texto, livre);
+  const proib = termosProibidos(`${campos.comoFoi} ${campos.proximoPasso} ${campos.pedido}`);
+  const chk = checklist(p, texto, livre);
+  const citaAntigo = citaNumeroAntigo(p, campos);
+  const foraDoContrato = livre != null ? numerosForaDoContrato(p, livre) : [];
   const incoerencia = incoerencias(p);
   /* O mês do contrato é o do ÚLTIMO dia (regra do SQL). Num recorte que
      atravessa a virada isso deixa o "No mês" menor que o próprio período —
@@ -1144,7 +1470,7 @@ function renderCartao() {
     p.mes.inicio > p.semana.inicio
       ? { diasMes: diasEntre(p.mes.inicio, p.mes.fim), diasPeriodo: diasEntre(p.semana.inicio, p.semana.fim) }
       : null;
-  const mensagem = montarMensagem(p, texto);
+  const mensagem = montarMensagem(p, texto, livre);
   /** Um número do cabeçalho foi corrigido? `sufixo` casa por final de path,
    *  porque o investimento é por plataforma e o total é derivado dele. */
   const tocou = (sufixo) =>
@@ -1226,9 +1552,10 @@ function renderCartao() {
           ? `<div class="callout" style="background:var(--warning-bg);border:1px solid var(--warning-bd);margin-bottom:9px">
                <b style="color:var(--warning)">O mês cobre ${mesParcial.diasMes} de ${mesParcial.diasPeriodo} dias do período.</b>
                O contrato define o mês como o do <b>último dia</b> do recorte, e este recorte atravessa a virada:
-               o bloco <span class="mono">📊 No mês</span> da mensagem vai de ${dia(p.mes.inicio)} a ${dia(p.mes.fim)}
-               e sai <b>menor</b> que o período logo acima dele. O texto não cita mais esse número — mas a linha
-               continua na mensagem. Se ela atrapalhar, termine o período no último dia do mês.
+               o mês vai de ${dia(p.mes.inicio)} a ${dia(p.mes.fim)} e é <b>menor</b> que o período logo acima.
+               O bloco <span class="mono">📊 No mês</span> saiu da mensagem em 02/09 e a prosa não cita esse
+               número — então isto aqui é só para você ler. Se precisar do mês inteiro, termine o período no
+               último dia do mês.
              </div>`
           : ""
       }
@@ -1296,10 +1623,35 @@ function renderCartao() {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
         <h3 style="margin:0">Touchpoint final — o que vai para o cliente</h3>
         <span class="chip ${origem === "regua" ? "info" : ""}">${origem === "regua" ? "escrito pela régua do cenário" : origem === "rascunho" ? "editado por você" : "esqueleto"}</span>
-        <button id="btn-ia" ${gerando || !r.pode_gerar ? "disabled" : ""}>${gerando ? "escrevendo…" : "Escrever"}</button>
-        <button id="btn-reset" class="ghost">Voltar ao esqueleto</button>
-        <span class="fhint" style="margin-left:auto">os campos com borda tracejada são seus · $0.00 de API</span>
+        ${livre != null ? `<span class="chip warning">mensagem inteira à mão</span>` : ""}
+        <button id="btn-ia" ${gerando || !r.pode_gerar || livre != null ? "disabled" : ""}>${gerando ? "escrevendo…" : "Escrever"}</button>
+        <button id="btn-livre" class="${livre != null ? "" : "ghost"}">${livre != null ? "Voltar aos campos" : "Editar a mensagem inteira"}</button>
+        ${livre != null ? `<button id="btn-livre-descartar" class="ghost">Descartar edição</button>` : ""}
+        <button id="btn-reset" class="ghost"${livre != null ? " disabled" : ""}>Voltar ao esqueleto</button>
+        <span class="fhint" style="margin-left:auto">${
+          livre != null
+            ? "tudo é seu, cabeçalho e números inclusive · confira o checklist"
+            : "os campos com borda tracejada são seus · $0.00 de API"
+        }</span>
       </div>
+      ${
+        livre != null
+          ? `<div class="callout" style="background:var(--warning-bg);border:1px solid var(--warning-bd);margin-bottom:10px">
+               <b style="color:var(--warning)">Você está editando a mensagem inteira.</b>
+               Enquanto só os três campos eram editáveis, o cabeçalho vinha do contrato e nenhum número
+               podia nascer aqui. Agora pode — então quem confere é o checklist, no item
+               <span class="mono">Mensagem editada por inteiro</span>. Nada nesta caixa é recalculado:
+               corrigir investimento ou leads no cabeçalho <b>não</b> muda o painel de números acima,
+               e para isso continua existindo <b>Corrigir números</b>.
+             </div>`
+          : livreGuardado != null
+            ? `<div class="nota" style="margin-bottom:10px">
+                 Há uma <b>versão editada à mão</b> guardada para este cliente. O que vai para o cliente
+                 agora é o texto montado pelos campos abaixo — clique em <b>Editar a mensagem inteira</b>
+                 para voltar àquela versão.
+               </div>`
+            : ""
+      }
       ${
         lacunas.length
           ? `<div class="callout" style="background:var(--panel-2);border:1px solid var(--line-soft);margin-bottom:10px">
@@ -1325,17 +1677,33 @@ function renderCartao() {
           : ""
       }
       <div class="msg viva">
-        ${partesMensagem(p, texto, true)
-          .map((x) =>
-            x.tipo === "fixo"
-              ? `<div class="fixo">${esc(x.texto)}</div>`
-              : `<div class="fixo rot">${esc(x.rotulo)}</div>
-                 <div class="campo"><span class="tag">${esc(x.dica)}</span>
-                   <textarea class="box ed" data-k="${x.k}" rows="${x.linhas}"
-                     placeholder="${esc(x.rotulo)}">${esc(x.valor)}</textarea></div>`,
-          )
-          .join("")}
+        ${
+          livre != null
+            ? `<textarea class="box ed tudo" id="ed-livre" rows="18"
+                 aria-label="mensagem inteira">${esc(livre)}</textarea>`
+            : partesMensagem(p, texto, true)
+                .map((x) =>
+                  x.tipo === "fixo"
+                    ? `<div class="fixo">${esc(x.texto)}</div>`
+                    : `<div class="fixo rot">${esc(x.rotulo)}</div>
+                       <div class="campo"><span class="tag">${esc(x.dica)}</span>
+                         <textarea class="box ed" data-k="${x.k}" rows="${x.linhas}"
+                           placeholder="${esc(x.rotulo)}">${esc(x.valor)}</textarea></div>`,
+                )
+                .join("")
+        }
       </div>
+      ${
+        foraDoContrato.length
+          ? `<div class="callout critical" style="margin-top:10px">
+               <b>${foraDoContrato.length} número(s) da mensagem não existem no contrato:</b>
+               <span class="mono">${foraDoContrato.map(esc).join(" · ")}</span>.
+               O envio não fica travado — mas é exatamente este o defeito que originou o projeto
+               (“Appointments Booked” imprimia um campo de cadastro como resultado da semana).
+               Confira antes de publicar.
+             </div>`
+          : ""
+      }
       ${
         pend.length
           ? `<div class="callout critical" style="margin-top:10px"><b>${pend.length} marcador(es) por preencher.</b>
@@ -1385,23 +1753,40 @@ function renderCartao() {
     ta.style.height = ta.scrollHeight + 2 + "px";
   };
   for (const ta of document.querySelectorAll(".msg textarea.ed")) crescer(ta);
-  for (const ta of document.querySelectorAll("textarea.ed")) {
+  /* Um render no meio da digitação perde o cursor, então ele espera 700ms e
+     devolve o foco e a posição. O seletor de volta muda com o modo: no modo
+     livre a caixa é uma só e tem id próprio. */
+  const redesenharDepois = (ta, seletor) => {
+    clearTimeout(renderCartao._t);
+    renderCartao._t = setTimeout(() => {
+      const pos = ta.selectionStart;
+      render();
+      const alvo = document.querySelector(seletor);
+      if (alvo) {
+        alvo.focus();
+        alvo.setSelectionRange(pos, pos);
+      }
+    }, 700);
+  };
+  const taLivre = $("#ed-livre");
+  if (taLivre) {
+    taLivre.oninput = () => {
+      crescer(taLivre);
+      salvarMensagemLivre(r, taLivre.value);
+      redesenharDepois(taLivre, "#ed-livre");
+    };
+  }
+  for (const ta of document.querySelectorAll("textarea.ed[data-k]")) {
     ta.oninput = () => {
       crescer(ta);
       const novo = { ...texto, [ta.dataset.k]: ta.value };
       // editar à mão não descarta as lacunas nem as respostas já dadas
-      salvarRascunho(chaveP(), r.client_id, { texto: novo, origem: "rascunho", lacunas, escolhas });
-      clearTimeout(renderCartao._t);
-      renderCartao._t = setTimeout(() => {
-        const pos = ta.selectionStart;
-        const k = ta.dataset.k;
-        render();
-        const alvo = document.querySelector(`textarea.ed[data-k="${k}"]`);
-        if (alvo) {
-          alvo.focus();
-          alvo.setSelectionRange(pos, pos);
-        }
-      }, 700);
+      salvarRascunho(chaveP(), r.client_id, {
+        texto: novo, origem: "rascunho", lacunas, escolhas,
+        // e não descarta a versão livre guardada, que é outro caminho
+        ...(livreGuardado != null ? { livre: { ativo: false, mensagem: livreGuardado } } : {}),
+      });
+      redesenharDepois(ta, `textarea.ed[data-k="${ta.dataset.k}"]`);
     };
   }
   // Escolher a resposta de uma lacuna reescreve o bloco na hora — é de graça.
@@ -1421,6 +1806,19 @@ function renderCartao() {
   if (bR)
     bR.onclick = () => {
       apagarRascunho(chaveP(), r.client_id);
+      render();
+    };
+  const bLivre = $("#btn-livre");
+  if (bLivre)
+    bLivre.onclick = () => {
+      ligarModoLivre(r, livre == null);
+      render();
+    };
+  const bLivreX = $("#btn-livre-descartar");
+  if (bLivreX)
+    bLivreX.onclick = () => {
+      descartarMensagemLivre(r);
+      aviso("Edição da mensagem inteira descartada — voltou o texto montado pelos campos.", "info");
       render();
     };
   const bC = $("#btn-copiar");
@@ -1476,12 +1874,18 @@ async function escrever(r, escolhas, silencioso) {
       pedido: j.pedido_cliente ?? "",
     };
     if (!texto.comoFoi) throw new Error("resposta sem os três campos: " + JSON.stringify(j).slice(0, 200));
+    // Reescrever pela régua mexe nos TRÊS CAMPOS. A mensagem editada por
+    // inteiro é outro caminho e continua guardada — jogar fora aqui seria
+    // perder o trabalho de quem clicou em "Escrever o período todo" com uma
+    // mensagem à mão pronta em algum cliente.
+    const guardada = textoDe(r).livreGuardado;
     salvarRascunho(chaveP(), r.client_id, {
       texto,
       origem: "regua",
       lacunas: j.lacunas || [],
       escolhas: escolhas || {},
       motor: j.motor || null,
+      ...(guardada != null ? { livre: { ativo: false, mensagem: guardada } } : {}),
     });
 
     // A guarda de saída avisa, não reescreve: quem decide a palavra final é o
@@ -1537,14 +1941,19 @@ async function escreverTodos() {
 
 /** Os blocos que entram no envio, agrupados por gestor.
  *
- *  O FILTRO NÃO ENTRA AQUI de propósito. Filtrar é para revisar; enviar é
- *  sobre a semana inteira. Se o filtro mandasse no envio, uma busca esquecida
- *  na caixa faria o cliente de fora sumir sem ninguém perceber. */
-function blocosParaEnvio() {
+ *  O FILTRO continua sem entrar aqui: se o filtro mandasse no envio, uma
+ *  busca esquecida na caixa faria o cliente de fora sumir sem ninguém
+ *  perceber. Quem manda é `ids` — a SELEÇÃO, que é explícita, aparece
+ *  marcada na lista e tem os ausentes nomeados no diálogo de envio.
+ *  Sem `ids`, o padrão é `idsSelecionados()`, que sem seleção nenhuma
+ *  devolve todos os prontos: exatamente o comportamento de antes. */
+function blocosParaEnvio(ids) {
+  const alvo = new Set(ids || idsSelecionados());
   const porGestor = new Map();
   for (const r of S.linhas) {
     if (estadoDe(r) !== "pronto" && estadoDe(r) !== "editado") continue;
-    const { texto } = textoDe(r);
+    if (!alvo.has(r.client_id)) continue;
+    const { texto, livre } = textoDe(r);
     const p = payloadDe(r);
     // A nota da correção só é IMPRESSA no destino `cs` — quem decide é o
     // workflow. O canal do cliente recebe o bloco sem nota nenhuma.
@@ -1554,7 +1963,7 @@ function blocosParaEnvio() {
       porGestor.get(g).push({
         client_id: r.client_id,
         cliente: p.identificacao.cliente,
-        message_text: montarMensagem(p, texto),
+        message_text: montarMensagem(p, texto, livre),
         ...(nota ? { nota_interna: nota } : {}),
       });
     }
@@ -1566,7 +1975,11 @@ function blocosParaEnvio() {
 async function montarEnvio() {
   const porGestor = blocosParaEnvio();
   if (!porGestor.size) {
-    aviso("Nenhum cliente pronto: ou estão bloqueados, ou sem texto, ou ainda com marcador [ ].");
+    aviso(
+      idsEnviaveis().length
+        ? `Nenhum cliente selecionado — há ${idsEnviaveis().length} pronto(s). Use “Todos” na barra da lista.`
+        : "Nenhum cliente pronto: ou estão bloqueados, ou sem texto, ou ainda com marcador [ ].",
+    );
     return;
   }
   const saidas = [];
@@ -1602,6 +2015,19 @@ function abrirEnvio(saidas) {
        bloco em 6 das 16 semanas do canal — é o erro mais comum aqui.`
     : `<b>Prévia.</b> O n8n montou a mensagem exata e ainda <b>não</b> publicou. O botão
        <b>Publicar no canal</b> lá embaixo é que envia — e ele pede confirmação digitada.`;
+
+  /* Quem está pronto e NÃO vai. É o contrapeso da seleção: o cliente pode
+     sumir da mensagem, mas não pode sumir da tela — a pesquisa achou uma
+     semana inteira sem envio ($9,4k investidos) que ninguém notou. */
+  const foraIds = idsForaDaSelecao();
+  const fora = S.linhas.filter((r) => foraIds.includes(r.client_id));
+  $("#envio-fora").innerHTML = fora.length
+    ? `<div class="callout" style="background:var(--warning-bg);border:1px solid var(--warning-bd);margin-bottom:14px">
+         <b style="color:var(--warning)">${fora.length} cliente(s) prontos ficaram FORA desta seleção</b>
+         — eles não recebem nada agora:
+         <div style="margin-top:6px">${fora.map((x) => `<span class="chip">${esc(x.client_name)}</span>`).join(" ")}</div>
+       </div>`
+    : "";
 
   const corrs = correcoesDaSemana();
   $("#envio-correcoes").innerHTML = corrs.length
@@ -1902,17 +2328,13 @@ function reescreverSePreciso(r) {
 
 /* ═════════════ diálogo: enviar para CS ═════════════ */
 
-/** Os blocos que vão para a CS. `escopo` = a semana toda ou só o cliente
- *  aberto — "finalizar o touchpoint" é as duas coisas dependendo do dia. */
+/** Os blocos que vão para a CS. Três escopos, explícitos: o período todo
+ *  (ignora a seleção), os clientes SELECIONADOS, ou só o cliente aberto —
+ *  "finalizar o touchpoint" é as três coisas dependendo do dia. */
 function blocosCS(escopo) {
-  const porGestor = blocosParaEnvio();
-  if (escopo !== "cliente") return porGestor;
-  const m = new Map();
-  for (const [g, bs] of porGestor) {
-    const f = bs.filter((b) => b.client_id === S.sel);
-    if (f.length) m.set(g, f);
-  }
-  return m;
+  if (escopo === "cliente") return blocosParaEnvio(S.sel ? [S.sel] : []);
+  if (escopo === "selecao") return blocosParaEnvio(idsSelecionados());
+  return blocosParaEnvio(idsEnviaveis()); // "o período todo" ignora a seleção
 }
 
 function abrirCS() {
@@ -1921,13 +2343,22 @@ function abrirCS() {
   let escolhidas = [];
 
   const selecionado = S.linhas.find((x) => x.client_id === S.sel);
+  const nSel = idsSelecionados().length;
+  const nProntos = idsEnviaveis().length;
+  // A opção do meio é a resposta a "quero mandar vários de uma vez, mas não
+  // todos": ela usa a MESMA seleção que já está marcada na lista, então o
+  // que o diálogo diz é o que a tela mostra.
+  escopo = nSel && nSel < nProntos ? "selecao" : "semana";
   $("#cs-escopo").innerHTML = `
     <div class="field">
       <div class="fh"><span class="fl">O que mandar</span></div>
       <div style="display:grid;gap:6px">
         <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
-          <input type="radio" name="cs-escopo" value="semana" checked>
-          <span>O <b>período todo</b> — todos os blocos prontos</span></label>
+          <input type="radio" name="cs-escopo" value="semana"${escopo === "semana" ? " checked" : ""}>
+          <span>O <b>período todo</b> — os ${nProntos} blocos prontos, ignorando a seleção</span></label>
+        <label style="display:flex;gap:8px;align-items:center;cursor:${nSel ? "pointer" : "not-allowed"};opacity:${nSel ? 1 : 0.5}">
+          <input type="radio" name="cs-escopo" value="selecao"${escopo === "selecao" ? " checked" : ""} ${nSel ? "" : "disabled"}>
+          <span>Os <b>${nSel} cliente(s) selecionados</b> na lista</span></label>
         <label style="display:flex;gap:8px;align-items:center;cursor:${selecionado ? "pointer" : "not-allowed"};opacity:${selecionado ? 1 : 0.5}">
           <input type="radio" name="cs-escopo" value="cliente" ${selecionado ? "" : "disabled"}>
           <span>Só <b>${esc(selecionado ? selecionado.client_name : "o cliente aberto")}</b></span></label>

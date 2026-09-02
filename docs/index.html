@@ -131,6 +131,21 @@ input[type=date]::-webkit-calendar-picker-indicator { filter:invert(.6); cursor:
 
 .list { padding:6px; max-height:74vh; overflow:auto; }
 .list-head { padding:8px 10px 4px; font-size:11px; color:var(--tertiary); }
+
+/* ── seleção de quem vai no envio ─────────────────────────────────────
+   A caixa fica FORA do botão da linha: um <input> dentro de um <button> é
+   HTML inválido e faz o clique de marcar abrir o cliente junto. */
+.selbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:11.5px;
+  padding:7px 10px; margin:0 6px 4px; border-radius:8px;
+  background:var(--panel-2); border:1px solid var(--line-soft); color:var(--ink-2); }
+.selbar .selacoes { display:flex; gap:5px; margin-left:auto; }
+.selbar button { padding:2px 8px; font-size:11px; }
+.rowwrap { display:flex; align-items:center; border-radius:8px; }
+.rowwrap.on { background:var(--positive-bg); }
+.rowwrap:hover { background:var(--panel-2); }
+.rowwrap .pick { flex:0 0 auto; margin:0 0 0 9px; cursor:pointer; accent-color:var(--gold); }
+.rowwrap .pick:disabled { cursor:not-allowed; opacity:.35; }
+.rowwrap .row { flex:1 1 auto; min-width:0; width:auto; }
 .row { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:7px 9px;
   border:0; border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; cursor:pointer; }
 .row:hover { background:var(--panel-2); }
@@ -225,6 +240,10 @@ textarea.ed:focus { outline:2px solid var(--gold); outline-offset:-2px; }
 .msg textarea.ed:focus { outline:2px solid var(--gold); outline-offset:-2px; border-style:solid; }
 .msg .campo .tag { position:absolute; right:7px; top:-7px; font-size:9px; letter-spacing:.08em;
   text-transform:uppercase; color:var(--tertiary); background:var(--panel-2); padding:0 5px; }
+/* Modo livre: a mensagem inteira numa caixa só, cabeçalho e números
+   inclusive. A borda contínua (e não tracejada) é o sinal de que ali não
+   sobrou nada protegido pelo contrato — o que confere é o checklist. */
+.msg textarea.ed.tudo { border:1px solid var(--gold); background:var(--panel); }
 .acoes { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:12px;
   padding-top:12px; border-top:1px solid var(--line-soft); }
 .acoes .fhint { margin-left:auto; text-align:right; }
@@ -337,6 +356,7 @@ dialog .df { padding:12px 18px; border-top:1px solid var(--line-soft); display:f
   <div class="panes">
     <div class="pane">
       <div class="list-head" id="listhead"></div>
+      <div class="selbar" id="selbar"></div>
       <div class="list" id="list" role="listbox" aria-label="Clientes da semana"></div>
     </div>
     <div class="pane"><div class="card" id="card"></div></div>
@@ -350,6 +370,7 @@ dialog .df { padding:12px 18px; border-top:1px solid var(--line-soft); display:f
   </div>
   <div class="db">
     <div class="nota" style="margin-bottom:14px" id="envio-aviso"></div>
+    <div id="envio-fora"></div>
     <div id="envio-correcoes"></div>
     <div id="envio-corpo"></div>
   </div>

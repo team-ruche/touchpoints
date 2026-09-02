@@ -28,8 +28,9 @@ const mod = await import(
     Buffer.from(
       fonte +
         "\nexport { S, visiveis, casaBusca, estadoDe, segundaDa, domingoDa, ultimaSemanaFechada," +
-        " somaSemanas, filtrosAtivos, blocosParaEnvio, envioDe, registrarEnvio, enviosDaSemana," +
-        " salvarRascunho, FILTROS_PADRAO };",
+        " somaSemanas, filtrosAtivos, blocosParaEnvio, blocosCS, envioDe, registrarEnvio, enviosDaSemana," +
+        " salvarRascunho, FILTROS_PADRAO, idsEnviaveis, idsSelecionados, idsForaDaSelecao," +
+        " estaSelecionado, alternarSelecao, gravarSelecao, selecionarVisiveis, selecaoDaSemana };",
     ).toString("base64")
 );
 
@@ -171,6 +172,93 @@ eq(
   JSON.stringify([...comFiltro.keys()].sort()),
   JSON.stringify([...semFiltro.keys()].sort()),
 );
+limpar();
+
+/* ── 5b. a SELEÇÃO, que é o jeito de mandar vários de uma vez ──────────
+ *
+ * A seleção é o oposto do filtro: ela é explícita, aparece marcada na lista
+ * e nomeia na tela quem ficou de fora. O que os casos abaixo seguram é a
+ * diferença entre "não escolhi ninguém" (= todos, o padrão de sempre) e
+ * "desmarquei todo mundo" (= não envia nada). Confundir os dois é o clique
+ * de "Nenhum" virando um envio para 42 clientes. */
+console.log("\n5b) seleção de clientes para o envio");
+limpar();
+mod.gravarSelecao(null);
+
+// a seção 5 deixou UM cliente pronto; para exercitar "vários de uma vez"
+// é preciso mais de um, então escreve um texto fechado para os primeiros 5
+for (const r of mod.S.linhas.filter((x) => x.pode_gerar).slice(0, 5)) {
+  mod.salvarRascunho(SEMANA, r.client_id, {
+    texto: { comoFoi: "texto pronto.", proximoPasso: "ação em 25/08.", pedido: "um pedido." },
+    origem: "regua",
+    lacunas: [],
+    escolhas: {},
+  });
+}
+
+const prontos = mod.idsEnviaveis();
+eq("há prontos suficientes para o teste", prontos.length >= 3, true);
+eq("sem seleção, vão todos os prontos", mod.idsSelecionados().length, prontos.length);
+eq("sem seleção, ninguém fica de fora", mod.idsForaDaSelecao().length, 0);
+eq("sem seleção, o estado é 'todos'", mod.selecaoDaSemana(), null);
+
+const dois = prontos.slice(0, 2);
+mod.gravarSelecao(new Set(dois));
+eq("com dois marcados, vão dois", mod.idsSelecionados().length, 2);
+eq("e o resto aparece como fora", mod.idsForaDaSelecao().length, prontos.length - 2);
+eq("o marcado está marcado", mod.estaSelecionado(dois[0]), true);
+eq("o não marcado, não", mod.estaSelecionado(prontos[2]), false);
+eq(
+  "e só eles entram nos blocos do envio",
+  [...mod.blocosParaEnvio().values()].reduce((a, b) => a + b.length, 0),
+  // um cliente pode ter mais de um gestor, e aí o bloco dele sai em duas
+  // mensagens — a conta certa é por bloco, não por cliente
+  [...mod.blocosParaEnvio(dois).values()].reduce((a, b) => a + b.length, 0),
+);
+
+// desmarcar todos NÃO pode virar "todos"
+mod.gravarSelecao(new Set());
+eq("desmarcar todo mundo manda ninguém", mod.idsSelecionados().length, 0);
+eq("e isso NÃO é o mesmo que não ter seleção", mod.selecaoDaSemana() === null, false);
+eq("com ninguém marcado, não há blocos", mod.blocosParaEnvio().size, 0);
+
+// marcar de volta todo mundo volta a ser "todos", e não uma lista congelada:
+// senão um cliente que ficar pronto depois nunca mais entraria no envio
+mod.gravarSelecao(new Set(prontos));
+mod.alternarSelecao(prontos[0]);
+mod.alternarSelecao(prontos[0]);
+eq("remarcar todos volta ao estado 'todos'", mod.selecaoDaSemana(), null);
+
+// a ponte explícita entre filtrar e enviar
+const gestorTeste = mod.S.linhas.find((r) => (r.gestores || []).length)?.gestores[0];
+if (gestorTeste) {
+  mod.S.gestor = gestorTeste;
+  mod.selecionarVisiveis();
+  const visProntos = mod
+    .visiveis()
+    .filter((r) => ["pronto", "editado"].includes(mod.estadoDe(r)))
+    .map((r) => r.client_id);
+  eq("“só os visíveis” marca exatamente o que o filtro mostra", mod.idsSelecionados().length, visProntos.length);
+  limpar();
+  eq("e limpar o filtro não desmarca ninguém", mod.idsSelecionados().length, visProntos.length);
+}
+
+// o escopo "período todo" da CS IGNORA a seleção — é a saída para quem
+// selecionou dois clientes e quer mandar a semana inteira para a CS
+mod.gravarSelecao(new Set(dois));
+eq(
+  "CS: “período todo” ignora a seleção",
+  [...mod.blocosCS("semana").values()].reduce((a, b) => a + b.length, 0),
+  [...mod.blocosParaEnvio(mod.idsEnviaveis()).values()].reduce((a, b) => a + b.length, 0),
+);
+eq(
+  "CS: “selecionados” usa a mesma seleção da lista",
+  [...mod.blocosCS("selecao").values()].reduce((a, b) => a + b.length, 0),
+  [...mod.blocosParaEnvio(dois).values()].reduce((a, b) => a + b.length, 0),
+);
+mod.S.sel = dois[0];
+eq("CS: “só o cliente aberto” manda um bloco por gestor dele", [...mod.blocosCS("cliente").values()].every((b) => b.length === 1), true);
+mod.gravarSelecao(null);
 limpar();
 
 /* ── 6. registro de envio (o que evita mandar duas vezes) ── */

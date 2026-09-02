@@ -114,13 +114,42 @@ else {
 
 /* ── 4. o rótulo da meta: número certo, origem falsa é o bug de origem ── */
 console.log("\n4) origem da meta troca o rótulo, não o número");
-const rMeta = linhas.find((r) => r.payload.agendamento.meta_usada != null);
+// um cliente cuja PROSA muda com a origem da meta: o cenário D e o E não
+// citam o mês, e num deles o rótulo não teria onde aparecer
+const clonar = (o) => JSON.parse(JSON.stringify(o));
+const comRotulo = (r, origem) => {
+  const p = clonar(r.payload);
+  p.agendamento.origem_meta = origem;
+  return redigir(p).como_foi;
+};
+const rMeta =
+  linhas.find(
+    (r) => r.payload.agendamento.meta_usada != null && comRotulo(r, "contrato") !== comRotulo(r, "benchmark"),
+  ) || linhas.find((r) => r.payload.agendamento.meta_usada != null);
 const pC = mod.aplicarCorrecoes(rMeta.payload, { campos: { "agendamento.origem_meta": "contrato" }, motivo: "x" });
 const pB = mod.aplicarCorrecoes(rMeta.payload, { campos: { "agendamento.origem_meta": "benchmark" }, motivo: "x" });
+/* O bloco "📊 No mês" saiu da mensagem em 02/09/2026, e com ele a linha
+   "• Agendamentos: N de M contratados" — que era ONDE este rótulo aparecia.
+   A distinção não desapareceu: ela vive na prosa do "Como foi", escrita pela
+   régua. Este caso mudou de lugar junto com ela, porque a regra que ele
+   segura é a mesma e continua sendo a mais cara do projeto: benchmark do
+   nicho NUNCA pode ser apresentado como meta contratada. */
 const t4 = { comoFoi: "a", proximoPasso: "b", pedido: "c" };
-verdade("contrato → “de N contratados”", mod.montarMensagem(pC, t4).includes("contratados"));
-verdade("benchmark → “referência para a sua vertical”",
-  mod.montarMensagem(pB, t4).includes("referência para a sua vertical"));
+verdade("o rótulo saiu da mensagem junto com o bloco do mês",
+  !mod.montarMensagem(pC, t4).includes("contratados") && !mod.montarMensagem(pC, t4).includes("📊 No mês"));
+/* A régua tem quatro frases diferentes para o mês (com e sem agendamento,
+   faltando ou não faltando), e cada uma diz "meta" de um jeito. O que vale
+   em TODAS é o par abaixo: a palavra "contratado" só pode existir quando a
+   meta veio do contrato, e "referência da sua vertical" só quando veio do
+   benchmark. Amarrar a frase exata amarraria a régua; amarrar o par amarra
+   a regra. */
+const proC = texto3(redigir(pC)).comoFoi;
+const proB = texto3(redigir(pB)).comoFoi;
+verdade("a origem realmente muda a prosa", proC !== proB);
+verdade("a prosa do benchmark JAMAIS diz contratado", !/contratad/i.test(proB));
+verdade("a prosa do benchmark diz que a referência é da vertical", /vertical/i.test(proB));
+verdade("a prosa do contrato JAMAIS chama a meta de referência da vertical", !/vertical/i.test(proC));
+verdade("e ela fala de meta ou de contratado", /\bmeta\b|contratad/i.test(proC));
 eq("o número da meta não mudou", pC.agendamento.meta_usada, rMeta.payload.agendamento.meta_usada);
 
 /* ── 5. a régua reescreve em cima do número corrigido ── */
@@ -236,7 +265,7 @@ async function rodar(corpo) {
 }
 
 const blocos = [bloco, semNota].filter(Boolean);
-const comum = { blocos, gestor: "Lucas Bragança", periodo: "Mon, 08/17 to Sun, 08/23", week_start: SEMANA };
+const comum = { blocos, gestor: "Lucas Bragança", periodo: "17/08 a 23/08", week_start: SEMANA };
 
 const noCanal = await rodar({ ...comum, confirmar: true });
 eq("canal: destino", noCanal.destino, "canal");

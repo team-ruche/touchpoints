@@ -418,8 +418,8 @@ export function redigir(p, escolhas) {
     meta == null
       ? null
       : ag.origem_meta === "contrato"
-        ? "os " + meta + " agendamentos contratados para o mês"
-        : "a referência de " + meta + " agendamentos da sua vertical";
+        ? osN(meta, "agendamento contratado para o mês", "agendamentos contratados para o mês")
+        : "a referência de " + meta + " " + plural(meta, "agendamento", "agendamentos") + " da sua vertical";
   const faltaMes = meta == null ? null : meta - p.mes.agendamentos;
   /* O mês só entra em prosa quando ele CONTÉM o período. Num recorte livre
      que atravessa a virada (20/08 a 05/09), o bloco "📊 No mês" é o mês do
@@ -441,18 +441,24 @@ export function redigir(p, escolhas) {
         ? /* "faltam 7 para a referência de 7" seria verdade e leitura ruim */
           "No mês ainda não houve agendamento, e " +
           (ag.origem_meta === "contrato"
-            ? "a meta são " + meta + " no mês"
+            ? meta === 1
+              ? "a meta é 1 no mês"
+              : "a meta são " + meta + " no mês"
             : "a referência da sua vertical é " + meta + " no mês")
         : faltaMes > 0
-        ? "No mês são " +
-          p.mes.agendamentos +
-          " agendamentos até aqui, e " +
+        ? /* concordância: o número vem do banco e pode ser 1. "No mês são 1
+             agendamentos" é a mesma classe do "os 1 lead" que já foi corrigido
+             em 02/09 — trecho montado por concatenação, verbo preso no plural. */
+          (p.mes.agendamentos === 1
+            ? "No mês há 1 agendamento até aqui"
+            : "No mês são " + p.mes.agendamentos + " agendamentos até aqui") +
+          ", e " +
           (faltaMes === 1 ? "falta 1" : "faltam " + faltaMes) +
           " para " + alvoMes
-        : "No mês já são " +
-          p.mes.agendamentos +
-          " agendamentos, em cima de " +
-          alvoMes;
+        : (p.mes.agendamentos === 1
+            ? "No mês já há 1 agendamento"
+            : "No mês já são " + p.mes.agendamentos + " agendamentos") +
+          ", em cima de " + alvoMes;
 
   /* Regra 8: sem benchmark de CPL não se inventa alvo. */
   const contraAlvo =

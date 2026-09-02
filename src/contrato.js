@@ -38,8 +38,8 @@ function addDays(s, n) {
 function menor(a, b) {
   return a < b ? a : b;
 }
-function mm_dd(s) {
-  return s.slice(5, 7) + "/" + s.slice(8, 10);
+function dd_mm(s) {
+  return s.slice(8, 10) + "/" + s.slice(5, 7);
 }
 
 /**
@@ -79,14 +79,19 @@ export function ehSemanaPadrao(ini, fim) {
   return s2d(ini).getUTCDay() === 1 && fim === addDays(ini, 6);
 }
 
-const DOW_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/** "Mon, 08/17 to Sun, 08/23" — o mesmo rótulo que o canal usa há 16 semanas.
- *  Para um período qualquer, o dia da semana é o de verdade das duas pontas.
+/** "17/08 a 23/08" — dd/mm nas duas pontas.
+ *
+ *  Até 02/09/2026 esta linha saía em padrão americano ("Mon, 08/17 to Sun,
+ *  08/23") enquanto TODO o resto da mensagem saía em dd/mm: o bloco do mês,
+ *  a data do "Próximo passo", a data de validação de uma otimização. Dois
+ *  formatos na mesma mensagem fazem "08/09" ser lido como 9 de agosto — o
+ *  número está certo e a leitura sai falsa, que é a família de defeito que
+ *  originou este projeto. Um formato só, e ele é o da prosa.
+ *
  *  ⚠️ `app.js` tem a mesma função (é outro arquivo, sem import): mexeu aqui,
- *  mexa lá. `testar_app.mjs` compara as duas. */
+ *  mexa lá. `testar_periodo.mjs` compara as duas. */
 export function rotuloPeriodo(ini, fim) {
-  return `${DOW_EN[s2d(ini).getUTCDay()]}, ${mm_dd(ini)} to ${DOW_EN[s2d(fim).getUTCDay()]}, ${mm_dd(fim)}`;
+  return `${dd_mm(ini)} a ${dd_mm(fim)}`;
 }
 
 /* ─────────── fuso: o corte de dia é no fuso do relatório, não em UTC ───────── */

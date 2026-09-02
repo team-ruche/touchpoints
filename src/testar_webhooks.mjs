@@ -159,7 +159,7 @@ const bloco = {
 const env = await chamar("mb-touchpoint-envio", {
   gestor: alvo.gestores[0] || "Teste",
   blocos: [bloco],
-  periodo: "Mon, 08/17 to Sun, 08/23",
+  periodo: "17/08 a 23/08",
   week_start: week,
 });
 console.log(`\n6) mb-touchpoint-envio (sem confirmar) -> ${env.status}`);
@@ -183,7 +183,7 @@ const iEnsaio = process.argv.indexOf("--ensaio");
 const canalEnsaio = iEnsaio > 0 ? process.argv[iEnsaio + 1] : null;
 if (canalEnsaio) {
   const forc = await chamar("mb-touchpoint-envio", {
-    gestor: "Teste", blocos: [bloco], periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
+    gestor: "Teste", blocos: [bloco], periodo: "17/08 a 23/08", week_start: week,
     confirmar: true, channel_id: canalEnsaio,
   });
   console.log(`7) confirmar:true no canal de ensaio ${canalEnsaio} -> ${forc.status} | ` +
@@ -199,7 +199,7 @@ if (canalEnsaio) {
 for (const cs of ["eduarda", "amanda"]) {
   const r = await chamar("mb-touchpoint-envio", {
     destino: "cs", cs, gestor: "Teste", blocos: [bloco],
-    periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
+    periodo: "17/08 a 23/08", week_start: week,
     // sem `confirmar`: isto NÃO manda DM para ninguém
   });
   const j = r.j || {};
@@ -209,13 +209,13 @@ for (const cs of ["eduarda", "amanda"]) {
 }
 const csRuim = await chamar("mb-touchpoint-envio", {
   destino: "cs", cs: "fulana", gestor: "Teste", blocos: [bloco],
-  periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
+  periodo: "17/08 a 23/08", week_start: week,
 });
 console.log(`7c) cs desconhecida -> ${csRuim.status} ${csRuim.status >= 400 ? "(recusada, correto)" : "⚠ ACEITOU"}`);
 
 /* ── 8. bloco com marcador tem de ser recusado pelo servidor ── */
 const marc = await chamar("mb-touchpoint-envio", {
-  gestor: "Teste", periodo: "Mon, 08/17 to Sun, 08/23", week_start: week,
+  gestor: "Teste", periodo: "17/08 a 23/08", week_start: week,
   blocos: [{ ...bloco, message_text: "Volta ao ar em [data]." }],
 });
 console.log(`8) bloco com marcador [ ] -> ${marc.status} ${marc.status >= 400 ? "(recusado, correto)" : "⚠ ACEITOU"}`);
