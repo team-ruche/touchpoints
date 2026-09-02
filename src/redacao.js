@@ -148,6 +148,13 @@ const plural = (n, um, muitos) => (Number(n) === 1 ? um : muitos);
 const quantos = (n, um, muitos) =>
   Number(n) === 0 ? "nenhum " + um : n + " " + plural(n, um, muitos);
 
+/** "os 6 leads", "o 1 lead". O artigo tem de acompanhar o número: escrever
+ *  "os 1 lead" é o tipo de erro que faz o cliente parar de ler o resto. */
+export const osN = (n, um, muitos) => (Number(n) === 1 ? "o 1 " + um : "os " + n + " " + muitos);
+
+/** Primeira letra maiúscula, para quando o trecho abre a frase. */
+const maiuscula = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
 /** Junta frases garantindo ponto final e espaço único. */
 function frases(lista) {
   const l = [];
@@ -458,10 +465,11 @@ export function redigir(p, escolhas) {
      parada está gerando visita. */
   const agendaSemMidia =
     ag.semana > 0 && t.spend === 0
-      ? "Os " +
-        ag.semana +
+      ? // começo de frase: `osN` devolve minúscula porque quase sempre é
+        // usado no meio ("levantar os 3 leads")
+        maiuscula(osN(ag.semana, "agendamento", "agendamentos")) +
         " " +
-        plural(ag.semana, "agendamento veio", "agendamentos vieram") +
+        plural(ag.semana, "veio", "vieram") +
         " do trabalho do time de atendimento, não da campanha — ela não teve investimento nesta semana"
       : null;
 
@@ -471,7 +479,9 @@ export function redigir(p, escolhas) {
     (p.identificacao.plano || "").indexOf("PPA") >= 0 &&
     ag.semana === 0 &&
     (cen === "D" || cen === "E" || cen === "F")
-      ? "No seu plano você paga por agendamento, então a semana sem agendamento não virou custo pra você — mas ela custou tempo, e é isso que estamos corrigindo"
+      ? // sem pronome de propósito: com o recorte livre "a semana" vira "o
+        // período", e um "ela" pendurado deixa de concordar com o sujeito
+        "No seu plano você paga por agendamento, então a semana sem agendamento não virou custo pra você — mas custou tempo, e é isso que estamos corrigindo"
       : null;
 
   const pedidoGenerico = () =>
@@ -527,12 +537,19 @@ export function redigir(p, escolhas) {
           (noMes ? noMes + ". " : "") +
           "O que decide o próximo agendamento agora é o tempo entre o lead entrar e alguém falar com ele",
       ]);
+      /* O conjunto de leads a auditar é o do MÊS quando o mês contém o
+         período. Num recorte que atravessa a virada (25/08 a 01/09) o mês
+         é só o pedaço do novo — e "levantar os 0 leads do mês" logo depois
+         de "6 leads no período" é o defeito de rótulo do projeto inteiro,
+         em uma frase. Aí o conjunto certo é o do próprio período. */
+      const audit = mesContemPeriodo && p.mes.leads >= t.leads
+        ? { n: p.mes.leads, onde: "do mês" }
+        : { n: t.leads, onde: "do período" };
       proximo_passo =
-        "Vamos levantar os " +
-        p.mes.leads +
-        " " +
-        plural(p.mes.leads, "lead", "leads") +
-        " do mês e medir quantos foram atendidos em até 10 minutos; esse número chega para você em " +
+        (audit.n > 0
+          ? "Vamos levantar " + osN(audit.n, "lead", "leads") + " " + audit.onde
+          : "Vamos acompanhar cada lead que entrar") +
+        " e medir quantos foram atendidos em até 10 minutos; esse número chega para você em " +
         ddmm(ctx.quarta) +
         ".";
       pedido_cliente = um([

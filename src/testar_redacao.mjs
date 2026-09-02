@@ -117,6 +117,20 @@ for (const ws of SEMANAS) {
     // 2. prazo no "Próximo passo" — a falha mais comum e a mais cara
     if (out.avisos.sem_prazo) erro(`${nome} [${out.cenario}] "Próximo passo" sem data: ${out.proximo_passo}`);
 
+    // 2b. toda frase abre em maiúscula. Parece cosmético e não é: as frases
+    // sao montadas por concatenação, então um trecho que era meio de frase e
+    // virou começo aparece em minúscula na cara do cliente. Aconteceu com
+    // "os N agendamentos vieram" quando o artigo passou a ser calculado.
+    for (const campo of ["como_foi", "proximo_passo", "pedido_cliente"]) {
+      for (const f of String(out[campo]).split(/(?<=[.!?…])\s+/)) {
+        const t = f.trim();
+        if (!t) continue;
+        const c = t.charAt(0);
+        if (c === c.toLowerCase() && c !== c.toUpperCase())
+          erro(`${nome} [${out.cenario}] frase começa em minúscula em ${campo}: "${t.slice(0, 60)}"`);
+      }
+    }
+
     // 3. marcador só onde o banco realmente não tem o fato
     const marc = out.avisos.pendencias;
     if (marc.length) {

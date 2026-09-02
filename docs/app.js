@@ -648,7 +648,10 @@ function checklist(p, texto) {
   const plats = Object.entries(p.midia.por_plataforma);
   const t = p.midia.total;
   const corr = p.correcao || null;
+  // duas formas porque as duas frases regem diferente: "agendamento DO
+  // período" e "o mês contém O período".
   const rec = p.semana.padrao === false ? "do período" : "da semana";
+  const recorte = p.semana.padrao === false ? "o período" : "a semana";
   const itens = [
     { id: "proveniencia", label: "Todo número exibido tem proveniência registrada",
       ok: Object.keys(p.proveniencia ?? {}).length > 0 },
@@ -687,7 +690,7 @@ function checklist(p, texto) {
   }
   itens.push({
     id: "coerencia",
-    label: `${p.semana.padrao === false ? "Período" : "Semana"} e mês fecham entre si — o mês contém ${rec}`,
+    label: `${p.semana.padrao === false ? "Período" : "Semana"} e mês fecham entre si — o mês contém ${recorte}`,
     ok: incoerencias(p).length === 0,
   });
   return itens;
@@ -1134,6 +1137,13 @@ function renderCartao() {
   const chk = checklist(p, texto);
   const citaAntigo = citaNumeroAntigo(p, texto);
   const incoerencia = incoerencias(p);
+  /* O mês do contrato é o do ÚLTIMO dia (regra do SQL). Num recorte que
+     atravessa a virada isso deixa o "No mês" menor que o próprio período —
+     não é erro, mas quem manda tem de ver antes do cliente ver. */
+  const mesParcial =
+    p.mes.inicio > p.semana.inicio
+      ? { diasMes: diasEntre(p.mes.inicio, p.mes.fim), diasPeriodo: diasEntre(p.semana.inicio, p.semana.fim) }
+      : null;
   const mensagem = montarMensagem(p, texto);
   /** Um número do cabeçalho foi corrigido? `sufixo` casa por final de path,
    *  porque o investimento é por plataforma e o total é derivado dele. */
@@ -1211,6 +1221,17 @@ function renderCartao() {
 
     <div class="sec">
       <h3>No mês</h3>
+      ${
+        mesParcial
+          ? `<div class="callout" style="background:var(--warning-bg);border:1px solid var(--warning-bd);margin-bottom:9px">
+               <b style="color:var(--warning)">O mês cobre ${mesParcial.diasMes} de ${mesParcial.diasPeriodo} dias do período.</b>
+               O contrato define o mês como o do <b>último dia</b> do recorte, e este recorte atravessa a virada:
+               o bloco <span class="mono">📊 No mês</span> da mensagem vai de ${dia(p.mes.inicio)} a ${dia(p.mes.fim)}
+               e sai <b>menor</b> que o período logo acima dele. O texto não cita mais esse número — mas a linha
+               continua na mensagem. Se ela atrapalhar, termine o período no último dia do mês.
+             </div>`
+          : ""
+      }
       <div class="mesbox">
         <span class="lbl">${dia(p.mes.inicio)} a ${dia(p.mes.fim)} · ${esc(p.proveniencia.meta_mensal)}</span>
         <span>Leads: <b>${p.mes.leads}</b></span>

@@ -590,11 +590,19 @@ for (const b of blocos) {
 // O canal mantém o formato que ele usa há 16 semanas. O DM da CS diz, na
 // primeira linha, que aquilo é uma cópia interna do que o cliente recebe —
 // senão vira mais uma mensagem sem remetente claro na caixa de entrada dela.
+// "Weekly" só quando é semana fechada de verdade. O cabeçalho vai para o
+// canal que o CLIENTE lê, e chamar um recorte de 8 dias de semanal é o
+// mesmo rótulo falso que originou o projeto — só que na moldura.
+const ehSemana = !body.week_end ||
+  (new Date(body.week_start + 'T00:00:00Z').getUTCDay() === 1 &&
+   Math.round((Date.parse(body.week_end + 'T00:00:00Z') - Date.parse(body.week_start + 'T00:00:00Z')) / 86400000) === 6);
+const titulo = (ehSemana ? 'Weekly Touchpoints' : 'Touchpoints') + ' — ' + periodo;
+
 const partes = destino === 'cs'
   ? ['🔒 **Touchpoints — ' + periodo + '**',
      '_Cópia interna para ' + cs.nome + ' · gestor ' + gestor + ' · ' + blocos.length +
      ' cliente(s). É o mesmo texto que vai (ou foi) para o canal Touchpoints._']
-  : ['**@' + gestor + '**', '📋 **Weekly Touchpoints — ' + periodo + '**'];
+  : ['**@' + gestor + '**', '📋 **' + titulo + '**'];
 
 for (const b of blocos) {
   partes.push('---');

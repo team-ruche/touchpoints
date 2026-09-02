@@ -22,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { janela, ehSemanaPadrao, rotuloPeriodo, construir } from "./contrato.js";
-import { redigir, paraPeriodo } from "./redacao.js";
+import { redigir, paraPeriodo, osN } from "./redacao.js";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const LIVE = path.dirname(AQUI);
@@ -385,6 +385,107 @@ console.log("\n7) validação no Code node gerado");
   const solto = await chamar({ week_start: "2026-08-18", week_end: "2026-08-27", tz: "America/New_York" });
   ok("com week_end, começar numa terça é aceito", solto.ok === true, JSON.stringify(solto).slice(0, 120));
   eq("e devolve as duas pontas", [solto.week_start, solto.week_end], ["2026-08-18", "2026-08-27"]);
+}
+
+/* ═══ 8. o mês que NÃO contém o período ══════════════════════════════
+ *
+ * Achado testando 25/08 a 01/09 no ar: o recorte atravessa a virada, o mês
+ * do contrato vira 01/09 a 01/09 (um dia) e a prosa saiu dizendo "vamos
+ * levantar os 0 leads do mês" logo depois de "6 leads" no período. É o
+ * defeito que originou o projeto — número certo, rótulo falso — escrito de
+ * outro jeito.
+ *
+ * A regra que este bloco segura: quando o mês não contém o período, NENHUM
+ * número do texto pode estar pendurado na palavra "mês". Falar do mês sem
+ * número (a verba do mês acabou) continua valendo. */
+console.log("\n8) mês que não contém o período");
+{
+  const NUM_NO_MES = [/\d[^.]{0,30}?\b(?:do|no)\s+m[êe]s\b/i, /\b(?:do|no)\s+m[êe]s\b[^.]{0,30}?\d/i];
+  const ARTIGO_PLURAL = /\b(os|as|aos|dos|nos|nas)\s+1\s+\w/i;
+  // "período … ela/dela" — pronome que ficou no feminino depois da troca.
+  // A configuração e a campanha são femininas de verdade, então a busca é
+  // pela frase do PPA, que era a única que falava DO recorte.
+  const PRONOME = /per[íi]odo[^.]{0,60}\bmas\s+ela\b/i;
+
+  let comNumeroDoMes = 0, comArtigo = 0, comPronome = 0;
+  const mostra = [];
+  for (const r of linhas) {
+    const p = JSON.parse(JSON.stringify(r.payload));
+    // 25/08 a 01/09: 8 dias, e o mês do contrato é só 01/09
+    p.semana = { inicio: "2026-08-25", fim: "2026-09-01", dias: 8, padrao: false,
+                 label: rotuloPeriodo("2026-08-25", "2026-09-01"), timezone: p.semana.timezone };
+    p.mes = { ...p.mes, inicio: "2026-09-01", fim: "2026-09-01", leads: 0, agendamentos: 0, spend: 0 };
+    p.agendamento = { ...p.agendamento, mes_ate_domingo: 0 };
+
+    const escolhas = {};
+    for (const l of redigir(p, {}).lacunas) escolhas[l.id] = l.opcoes[0].valor;
+    const out = redigir(p, escolhas);
+    const todo = [out.como_foi, out.proximo_passo, out.pedido_cliente].join(" ");
+    // a data (01/09) tem dígito e não é afirmação sobre o mês; o valor em
+    // dólar É — "$1.200 investidos no mês" é exatamente o que se procura.
+    const semData = todo.replace(/\b\d{1,2}\/\d{1,2}\b/g, "«data»");
+
+    if (NUM_NO_MES.some((re) => re.test(semData))) {
+      comNumeroDoMes++;
+      if (mostra.length < 4) mostra.push(`${r.client_name} [${out.cenario}]: ${semData.match(NUM_NO_MES[0])?.[0] || semData.match(NUM_NO_MES[1])?.[0]}`);
+    }
+    if (ARTIGO_PLURAL.test(todo)) {
+      comArtigo++;
+      if (mostra.length < 6) mostra.push(`${r.client_name}: artigo — "${todo.match(ARTIGO_PLURAL)[0]}"`);
+    }
+    if (PRONOME.test(todo)) {
+      comPronome++;
+      if (mostra.length < 8) mostra.push(`${r.client_name}: pronome — "${todo.match(PRONOME)[0].slice(-40)}"`);
+    }
+  }
+  eq("blocos citando NÚMERO do mês que não contém o período", comNumeroDoMes, 0);
+  eq('blocos com artigo plural em 1 ("os 1 lead")', comArtigo, 0);
+  eq("blocos com pronome feminino sobrando depois da troca", comPronome, 0);
+  for (const m of mostra) console.log("    · " + m);
+
+  // e o artigo tem de estar certo nos dois lados
+  eq("artigo com 1", osN(1, "lead", "leads"), "o 1 lead");
+  eq("artigo com 6", osN(6, "lead", "leads"), "os 6 leads");
+}
+
+/* ═══ 9. o cabeçalho do canal também é rótulo ═══════════════════════
+ *
+ * O bloco que embrulha a mensagem no canal dizia "Weekly Touchpoints"
+ * sempre. Num recorte de 8 dias isso é o mesmo defeito da linha de dentro,
+ * só que na moldura — e essa moldura o cliente lê. Quem decide é o Code
+ * node do envio, a partir das duas pontas. */
+console.log("\n9) cabeçalho do canal");
+{
+  const wf = JSON.parse(fs.readFileSync(path.join(LIVE, "n8n", "03_mb-touchpoint-envio.json"), "utf8"));
+  const codigo = wf.nodes.find((n) => n.name === "Montar bloco").parameters.jsCode;
+  const cfg = Object.fromEntries(
+    wf.nodes.find((n) => n.name === "Config").parameters.assignments.assignments.map((x) => [x.name, x.value]),
+  );
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const rodar = new AsyncFunction(codigo);
+  const chamar = async (body) => {
+    globalThis.$ = (nome) => {
+      if (nome === "Config") return { first: () => ({ json: cfg }) };
+      if (nome === "Webhook") return { first: () => ({ json: { headers: { "x-tp-token": cfg.token }, body } }) };
+      throw new Error("node desconhecido: " + nome);
+    };
+    return (await rodar())[0].json;
+  };
+  const bloco1 = [{ client_id: "c1", cliente: "#001 TESTE", message_text: "Olá.\nAd Spend: $1.00" }];
+
+  const semana = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "Mon, 08/17 to Sun, 08/23", week_start: "2026-08-17" });
+  ok("semana fechada mantém 'Weekly Touchpoints'", semana.mensagem.includes("📋 **Weekly Touchpoints — Mon, 08/17 to Sun, 08/23**"), semana.mensagem.split("\n")[2]);
+
+  const semanaExplicita = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "Mon, 08/17 to Sun, 08/23", week_start: "2026-08-17", week_end: "2026-08-23" });
+  ok("segunda a domingo explícito também é semana", semanaExplicita.mensagem.includes("Weekly Touchpoints"));
+
+  const livre = await chamar({ gestor: "Fulano", blocos: bloco1, periodo: "Tue, 08/25 to Tue, 09/01", week_start: "2026-08-25", week_end: "2026-09-01" });
+  ok("recorte livre NÃO diz Weekly", !livre.mensagem.includes("Weekly"), livre.mensagem.split("\n")[2]);
+  ok("e mantém o resto do cabeçalho", livre.mensagem.includes("📋 **Touchpoints — Tue, 08/25 to Tue, 09/01**"), livre.mensagem.split("\n")[2]);
+  ok("o bloco do cliente não muda", livre.mensagem.includes("**Cliente: #001 TESTE**"));
+
+  const cs = await chamar({ destino: "cs", cs: "eduarda", gestor: "Fulano", blocos: bloco1, periodo: "Tue, 08/25 to Tue, 09/01", week_start: "2026-08-25", week_end: "2026-09-01" });
+  ok("a cópia da CS nunca disse Weekly e continua assim", !cs.mensagem.includes("Weekly") && cs.mensagem.includes("🔒 **Touchpoints —"));
 }
 
 console.log(falhas === 0 ? "\n✓ tudo passou" : `\n✗ ${falhas} falha(s)`);

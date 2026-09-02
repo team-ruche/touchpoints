@@ -242,6 +242,35 @@ usa a tela.
 de ser uma segunda; com ele, o webhook recusa formato errado, fim antes do
 começo, mais de 92 dias e qualquer fim que não seja ontem ou antes.
 
+### O que o primeiro recorte de verdade achou (25/08 a 01/09)
+
+Testar 8 dias que atravessam a virada do mês, nos 42 clientes, achou **quatro
+defeitos** — três deles antigos, que só apareceram porque o recorte mudou:
+
+| | |
+|---|---|
+| `Vamos levantar os 0 leads do mês` logo depois de `6 leads` no período | a frase lia `p.mes.leads`, que aqui é 1 dia de setembro. Agora o conjunto auditado é o do **período** quando o mês não o contém |
+| `Os 1 agendamento veio` | o artigo estava fixo no plural. Virou `osN()`: `o 1 agendamento` / `os 3 agendamentos` — bug **antigo**, aparece em qualquer semana com exatamente 1 |
+| `o período sem agendamento … mas **ela** custou tempo` | pronome preso ao gênero de "semana". O pronome saiu da frase, que agora funciona nos dois casos |
+| `📋 Weekly Touchpoints — Tue, 08/25 to Tue, 09/01` | o **cabeçalho do canal** também mentia. Quem decide agora é o Code node do envio, pelas duas pontas |
+
+O terceiro é o mais instrutivo: a troca `semana → período` acerta artigo e
+determinante, mas não persegue pronome em outra oração. Onde isso aparecer, o
+certo é tirar o pronome do texto, não ensinar a máquina a concordar.
+
+Entrou uma guarda geral em `testar_redacao.mjs`: **toda frase tem de abrir em
+maiúscula**. Ela pega a classe inteira de defeito de um trecho que era meio de
+frase e virou começo — que foi exatamente o do `osN`. Reintroduzir o bug faz o
+teste acusar 6 blocos.
+
+**O que NÃO foi mudado, e você decide:** o bloco `📊 No mês` continua na
+mensagem mesmo quando o mês tem 1 dia (`No mês (01/09 a 01/09)`), porque a
+regra "o mês é o do último dia" vem do SQL e vale também para as semanas
+fechadas que cruzam a virada — mexer nela muda o que o cliente recebe nessas
+semanas também. O que entrou foi um **aviso na tela**: o cartão diz "o mês
+cobre 1 de 8 dias do período" e sugere terminar o recorte no último dia do mês.
+A prosa já não cita esse número.
+
 ### O texto final é o formulário
 
 Os três campos deixaram de morar numa seção "Redação" no meio do cartão: eles
