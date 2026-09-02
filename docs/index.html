@@ -94,7 +94,7 @@ input[type=text]:focus { outline:2px solid var(--gold); outline-offset:-1px; }
 input[type=date]::-webkit-calendar-picker-indicator { filter:invert(.6); cursor:pointer; }
 .filtros { display:flex; flex-wrap:wrap; align-items:center; gap:8px; width:100%;
   padding-top:9px; margin-top:2px; border-top:1px solid var(--line-soft); }
-.filtros .lbl { font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.1em;
+.bar .lbl, .filtros .lbl { font-family:"IBM Plex Mono",monospace; font-size:9.5px; letter-spacing:.1em;
   text-transform:uppercase; color:var(--tertiary); }
 .sep { width:1px; align-self:stretch; background:var(--line-soft); margin:0 2px; }
 .badge-env { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:7px;
@@ -202,6 +202,33 @@ textarea.ed:focus { outline:2px solid var(--gold); outline-offset:-2px; }
   padding:13px 15px; border-radius:10px; background:var(--panel-2);
   border:1px solid var(--line-soft); max-height:460px; overflow:auto; }
 
+/* ── a mensagem final, editável NO LUGAR ──────────────────────────────
+   Os três campos de texto deixaram de morar numa seção separada: eles são
+   as partes editáveis da própria mensagem que vai para o cliente. O que
+   está fora deles é o que a tela NÃO deixa digitar — número do contrato. */
+/* `white-space:normal` no container é obrigatório: o `pre-wrap` herdado
+   transforma a indentação do HTML entre um campo e outro em linha em
+   branco, e a mensagem aparece esparramada. O pre-wrap fica só nos
+   pedaços de texto de verdade. */
+.msg.viva { max-height:none; padding:13px 15px 15px; white-space:normal; }
+.msg .fixo { white-space:pre-wrap; }
+.msg .rot { margin-top:14px; }
+.msg .campo { position:relative; margin:5px 0 2px; }
+.msg textarea.ed {
+  display:block; width:100%; padding:7px 9px; border-radius:7px;
+  font-family:"IBM Plex Mono",monospace; font-size:12px; line-height:1.62;
+  color:var(--ink); background:var(--panel);
+  border:1px dashed var(--line); resize:vertical; overflow:hidden;
+  min-height:2.6em;
+}
+.msg textarea.ed:hover { border-color:var(--gold); }
+.msg textarea.ed:focus { outline:2px solid var(--gold); outline-offset:-2px; border-style:solid; }
+.msg .campo .tag { position:absolute; right:7px; top:-7px; font-size:9px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--tertiary); background:var(--panel-2); padding:0 5px; }
+.acoes { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:12px;
+  padding-top:12px; border-top:1px solid var(--line-soft); }
+.acoes .fhint { margin-left:auto; text-align:right; }
+
 .check { display:grid; gap:3px; font-size:11.5px; }
 .check div { display:flex; gap:7px; align-items:flex-start; }
 .check .ok { color:var(--positive); font-family:"IBM Plex Mono",monospace; }
@@ -249,16 +276,29 @@ dialog .df { padding:12px 18px; border-top:1px solid var(--line-soft); display:f
   </header>
 
   <div class="bar">
-    <button id="prev" title="semana anterior">◀</button>
+    <button id="prev" title="período anterior, do mesmo tamanho">◀</button>
     <span class="weekpill"><span id="weeklabel">—</span></span>
-    <button id="next" title="próxima semana">▶</button>
+    <button id="next" title="próximo período, do mesmo tamanho">▶</button>
     <span class="mono meta" id="weekiso"></span>
-    <input type="date" id="f-data" title="ir para a semana de uma data">
+    <span class="sep"></span>
+    <span class="lbl">de</span>
+    <input type="date" id="f-de" title="primeiro dia do período">
+    <span class="lbl">até</span>
+    <input type="date" id="f-ate" title="último dia do período — no máximo ontem">
+    <button id="btn-aplicar" disabled>Aplicar</button>
+    <select id="f-atalho" title="recortes prontos">
+      <option value="">atalhos…</option>
+      <option value="semana">última semana fechada (seg–dom)</option>
+      <option value="7">últimos 7 dias</option>
+      <option value="14">últimos 14 dias</option>
+      <option value="30">últimos 30 dias</option>
+      <option value="mes">mês atual até ontem</option>
+      <option value="mespassado">mês passado inteiro</option>
+    </select>
     <button id="recarregar">Recarregar</button>
     <span class="sep"></span>
-    <button id="btn-todos">Escrever a semana toda</button>
+    <button id="btn-todos">Escrever o período todo</button>
     <button id="btn-envio" class="primary">Revisar e enviar</button>
-    <button id="btn-cs">Enviar para CS</button>
     <button id="btn-export" class="ghost">Exportar rascunhos</button>
     <button id="btn-cfg" class="ghost">Ajustes</button>
     <span class="hint" id="contagem"></span>

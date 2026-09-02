@@ -191,6 +191,77 @@ não devolve nada disso, e a tela recusa o envio dizendo qual comando falta.
 
 ---
 
+## 02/09 — período personalizado, e o texto final virou o lugar de editar
+
+Duas mudanças pedidas depois de usar a tela: escolher **de que dia até que
+dia**, e **editar dentro do texto final** em vez de num formulário separado.
+
+### De tal dia até tal dia
+
+A barra tem duas datas — `de` e `até` — mais atalhos prontos (última semana
+fechada, últimos 7/14/30 dias, mês atual até ontem, mês passado inteiro). As
+setas `◀ ▶` andam o **tamanho do recorte**: num período de 15 dias, "anterior"
+são os 15 dias colados atrás.
+
+O teto é **ontem**. O dia de hoje ainda está entrando no `ad_insights`, e meio
+dia de investimento sairia como número menor do que foi.
+
+Escolher as duas pontas mexe em três coisas, e cada uma tem teste
+(`src/testar_periodo.mjs`):
+
+| | |
+|---|---|
+| **A janela de comparação** | passa a ter o MESMO tamanho do recorte. Comparar 21 dias contra os 7 anteriores inventaria uma queda de dois terços |
+| **O benchmark** | é mensal, e a fatia vira proporcional: `(mensal / 4,33) × dias/7`. Com 7 dias o número é **idêntico** ao de antes — é o que preserva a validação 44/44 contra o `ref_contract.py` |
+| **O texto** | "semana" vira "período", com concordância, e a semana FUTURA de verdade ("na próxima semana", "semana que vem") fica intacta |
+
+A última linha é a que importa mais, e é o defeito que originou o projeto com
+outra roupa: chamar 21 dias de "semana" é número certo com rótulo falso, igual
+ao `Appointments Booked`. O cabeçalho da mensagem também muda —
+`📌 Touch Point` em vez de `Weekly Touch Point`, `📅 Agendamentos no período`
+em vez de `na semana`.
+
+Duas decisões que valem registro:
+
+- **o mês continua sendo o do último dia** (é a regra do SQL). Num recorte que
+  atravessa a virada — 20/08 a 05/09 — o bloco "No mês" é 1º a 5 de setembro e
+  é MENOR que o período, de propósito. Nesse caso a checagem "o mês contém a
+  semana" fica quieta (senão seria alarme falso) e a redação **não** cita o mês
+  em prosa. O cabeçalho segue imprimindo o mês com as datas dele, que é o que
+  impede a linha de mentir;
+- **o piso do cenário E** ($150 de investimento com zero lead) encolhe em
+  recorte curto e **não cresce** em recorte longo. Um dia com $30 e nenhum lead
+  é incidente; um mês inteiro com investimento e nenhum lead também é.
+
+O rascunho de um recorte livre tem chave própria (`2026-08-10..2026-08-23`),
+então ele não se mistura com o da semana — e a semana fechada continua usando a
+chave antiga, o que preserva rascunho, correção e registro de envio de quem já
+usa a tela.
+
+**O servidor não confia na tela**: sem `week_end`, o `week_start` continua tendo
+de ser uma segunda; com ele, o webhook recusa formato errado, fim antes do
+começo, mais de 92 dias e qualquer fim que não seja ontem ou antes.
+
+### O texto final é o formulário
+
+Os três campos deixaram de morar numa seção "Redação" no meio do cartão: eles
+agora são as **partes editáveis da própria mensagem**, lá embaixo, com borda
+tracejada. O que está fora delas é o que a tela não deixa digitar — número, e
+número vem do contrato.
+
+Isso é uma função só (`partesMensagem`) montando as duas coisas: o cartão cola
+os pedaços com `<textarea>` no meio, e `montarMensagem` cola os mesmos pedaços
+com `
+
+`. Não existe uma segunda montagem para divergir da primeira — o teste
+afirma que colar as partes dá exatamente a mensagem.
+
+**Enviar para CS** e **Revisar e enviar** também desceram: ficam no rodapé do
+cartão, embaixo do checklist, ao lado do texto que eles mandam. "Revisar e
+enviar" continua na barra de cima também, porque é ação da semana inteira.
+
+---
+
 ## Como funciona
 
 ```
@@ -288,7 +359,9 @@ A pasta é estática (dois arquivos, sem build) — serve em qualquer lugar. O b
 4. Abra um dos 11, escolha o motivo da pausa na lista e veja o texto fechar sozinho.
 5. Busque `202`, depois `#202`, depois `flooring` — os três acham a mesma linha.
 6. Filtre por cenário `F` e por gestor ao mesmo tempo: é interseção, não união.
-7. Escolha uma data qualquer no calendário — cai na segunda daquela semana.
+7. Escolha `de` 10/08 e `até` 23/08, clique em **Aplicar**: a barra passa a dizer
+   `período livre · 14 dias`, o cabeçalho da mensagem perde o "Weekly" e o texto
+   troca "semana" por "período". As setas passam a andar 14 dias.
 8. Clique em **Revisar e enviar** e leia a mensagem exata. Publicar é o botão do rodapé, e
    ele pede confirmação digitada.
 
@@ -304,6 +377,7 @@ node simular_redacao.mjs 2026-08-17  # roda o Code node GERADO, sem Intl no esco
 node testar_app.mjs                # a mensagem final, montada, nos 44 clientes
 node testar_filtros.mjs            # busca, calendário, filtros e registro de envio
 node testar_correcao.mjs         # correção de número e o envio para a CS
+node testar_periodo.mjs          # o recorte livre: janela, benchmark e texto
 node ensaio_cs.mjs 2026-08-17    # o POST de verdade, no destino de ensaio
 node validar.mjs 2026-08-17 ../gabarito_2026-08-17.json   # o contrato vs. o Python
 node simular_n8n.mjs 2026-08-17 ../gabarito_2026-08-17.json
@@ -335,6 +409,14 @@ importam: o número corrigido chega à mensagem final **e** ao texto da régua; 
 nota interna aparece no DM da CS e **não** aparece no bloco do canal; e o Code
 node gerado resolve `cs: "eduarda"` para uma conversa que **não** é o canal do
 cliente — recusando CS desconhecida, marcador `[…]` e envio sem `confirmar`.
+
+`testar_periodo.mjs` é o que segura o período personalizado. Ele prova que a semana
+fechada não mudou (mesma janela, mesmo benchmark, mesmo rótulo), que a janela de
+comparação acompanha o tamanho do recorte, que os 88 blocos redigidos como período de
+21 dias não deixam nenhuma "semana" fora das que falam de futuro nem quebram
+concordância, que colar as partes da mensagem devolve a mensagem inteira, e que o
+**Code node gerado** recusa `week_end` malformado, invertido, maior que 92 dias ou que
+não termine ontem ou antes.
 
 `testar_filtros.mjs` exercita busca, calendário, filtros, estado do bloco e o registro de
 envio contra os 44 clientes reais — inclusive a regra que mais importa ali: **o filtro da
@@ -444,6 +526,7 @@ live/
   n8n/build.py           monta e publica os workflows        ⚠️ gera JSON com chave
   src/testar_filtros.mjs   busca, calendário, filtros, registro de envio
   src/testar_correcao.mjs  correção de número, nota interna e o Code node do envio
+  src/testar_periodo.mjs   período livre: janela, benchmark, texto e a porta do webhook
   src/ensaio_cs.mjs        manda um touchpoint real para o destino de ensaio
   app/index.html         a tela
   app/app.js             estado, régua dos cenários, léxico, mensagem final

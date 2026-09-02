@@ -265,14 +265,35 @@ const semana = body.week_start;
 if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(semana || ''))) {
   throw new Error('week_start ausente ou fora do formato YYYY-MM-DD');
 }
-// A semana do contrato começa na SEGUNDA. Aceitar outro dia geraria um bloco
-// silenciosamente deslocado — o tipo de erro que ninguém vê no texto final.
-if (new Date(semana + 'T00:00:00Z').getUTCDay() !== 1) {
-  throw new Error('week_start tem de ser uma segunda-feira: ' + semana);
+
+// PERÍODO PERSONALIZADO. Sem `week_end` nada muda: o contrato é a semana
+// fechada de segunda a domingo, e a segunda continua obrigatória — aceitar
+// outro dia geraria um bloco silenciosamente deslocado, que é o tipo de erro
+// que ninguém vê no texto final.
+//
+// Com `week_end`, o recorte é livre e as duas pontas mandam. As janelas de
+// comparação passam a ter o MESMO tamanho, e o benchmark mensal é fatiado
+// proporcionalmente — as duas coisas moram em contrato.js.
+const fim = body.week_end ? String(body.week_end) : null;
+if (fim === null) {
+  if (new Date(semana + 'T00:00:00Z').getUTCDay() !== 1) {
+    throw new Error('week_start tem de ser uma segunda-feira quando não vem week_end: ' + semana);
+  }
+} else {
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(fim)) throw new Error('week_end fora do formato YYYY-MM-DD: ' + fim);
+  if (fim < semana) throw new Error('week_end (' + fim + ') é antes de week_start (' + semana + ')');
+  const dias = Math.round((Date.parse(fim + 'T00:00:00Z') - Date.parse(semana + 'T00:00:00Z')) / 86400000) + 1;
+  // Teto de 92 dias: acima disso a leitura do ad_insights puxa o período, os
+  // dois períodos de comparação e o mês inteiro, e vira consulta de relatório
+  // — que não é o que este webhook é.
+  if (dias > 92) throw new Error('período de ' + dias + ' dias; o máximo é 92');
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (fim >= hoje) throw new Error('week_end tem de ser ontem ou antes: hoje ainda não fechou no ad_insights');
 }
 
 const params = {
   week_start: semana,
+  week_end: fim,
   tz: body.tz || 'America/New_York',
   gestor: body.gestor || null,
   client_ids: Array.isArray(body.client_ids) ? body.client_ids : null,
@@ -287,6 +308,8 @@ const linhas = construir(dados, params);
 return [{ json: {
   ok: true,
   week_start: semana,
+  week_end: linhas.length ? linhas[0].payload.semana.fim : (fim || null),
+  dias: linhas.length ? linhas[0].payload.semana.dias : null,
   gerado_em: new Date().toISOString(),
   motor: 'n8n mb-touchpoint-week',
   leitura: {

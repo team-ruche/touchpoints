@@ -42,22 +42,51 @@ function mm_dd(s) {
   return s.slice(5, 7) + "/" + s.slice(8, 10);
 }
 
-/** As sete datas que o CTE `p` do SQL define. */
-export function janela(weekStart) {
+/**
+ * As sete datas que o CTE `p` do SQL define.
+ *
+ * PERÍODO PERSONALIZADO (02/09/2026). O SQL só conhece semana fechada de
+ * segunda a domingo. Aqui `fim` é opcional: sem ele, o comportamento é
+ * idêntico ao de antes (7 dias a partir da segunda) — e é por isso que a
+ * validação contra `ref_contract.py` continua valendo.
+ *
+ * Com `fim`, o período tem N dias e as duas janelas de comparação passam a
+ * ter N dias TAMBÉM, coladas para trás. É a única definição que mantém a
+ * comparação honesta: comparar 15 dias contra 7 inventaria uma queda.
+ */
+export function janela(weekStart, fim) {
   const w0_ini = weekStart;
-  const w0_fim = addDays(weekStart, 6);
+  const w0_fim = fim && fim >= weekStart ? fim : addDays(weekStart, 6);
+  const dias = Math.round((s2d(w0_fim) - s2d(w0_ini)) / DIA) + 1;
   return {
     w0_ini,
     w0_fim,
-    w1_ini: addDays(weekStart, -7),
-    w1_fim: addDays(weekStart, -1),
-    w2_ini: addDays(weekStart, -14),
-    w2_fim: addDays(weekStart, -8),
-    // date_trunc('month', w0_fim) — o mês é o do DOMINGO, não o da segunda.
-    // Numa semana que cruza a virada do mês isso muda o acumulado; é de
+    dias,
+    w1_ini: addDays(w0_ini, -dias),
+    w1_fim: addDays(w0_ini, -1),
+    w2_ini: addDays(w0_ini, -2 * dias),
+    w2_fim: addDays(w0_ini, -dias - 1),
+    // date_trunc('month', w0_fim) — o mês é o do ÚLTIMO dia, não do primeiro.
+    // Num período que cruza a virada do mês isso muda o acumulado; é de
     // propósito e está no SQL.
     mes_ini: w0_fim.slice(0, 8) + "01",
   };
+}
+
+/** Segunda-feira? O contrato só chama um período de "semana" quando ele é
+ *  seg→dom de 7 dias — o resto é período, e o texto tem de dizer isso. */
+export function ehSemanaPadrao(ini, fim) {
+  return s2d(ini).getUTCDay() === 1 && fim === addDays(ini, 6);
+}
+
+const DOW_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Mon, 08/17 to Sun, 08/23" — o mesmo rótulo que o canal usa há 16 semanas.
+ *  Para um período qualquer, o dia da semana é o de verdade das duas pontas.
+ *  ⚠️ `app.js` tem a mesma função (é outro arquivo, sem import): mexeu aqui,
+ *  mexa lá. `testar_app.mjs` compara as duas. */
+export function rotuloPeriodo(ini, fim) {
+  return `${DOW_EN[s2d(ini).getUTCDay()]}, ${mm_dd(ini)} to ${DOW_EN[s2d(fim).getUTCDay()]}, ${mm_dd(fim)}`;
 }
 
 /* ─────────── fuso: o corte de dia é no fuso do relatório, não em UTC ───────── */
@@ -213,10 +242,16 @@ function dolar(v) {
  * @param dados  { clients, insights, insightsAll, appts, benchmarks, opts }
  *   insights     linhas de ad_insights na janela (>= min(w2_ini, mes_ini) e <= w0_fim)
  *   insightsAll  {client_id: primeiro insight_date de sempre}  (CTE `prim`)
- * @param params { week_start, tz, render_platforms }
+ * @param params { week_start, week_end, tz, render_platforms }
  */
 export function construir(dados, params) {
-  const j = janela(params.week_start);
+  const j = janela(params.week_start, params.week_end);
+  const padrao = ehSemanaPadrao(j.w0_ini, j.w0_fim);
+  /* Benchmark é MENSAL. Para uma semana o SQL divide por 4,33; para um
+     período de N dias a fatia proporcional é essa mesma divisão vezes
+     N/7 — e `semanas === 1` devolve o número idêntico ao de antes. */
+  const semanas = j.dias / 7;
+  const porPeriodo = (mensal) => (mensal / 4.33) * semanas;
   const tz = params.tz || "America/New_York";
   const render = params.render_platforms || ["meta"];
   const clientes = dados.clients;
@@ -353,13 +388,13 @@ export function construir(dados, params) {
         ? "contrato"
         : "benchmark";
 
-    const bm_leads_sem = bm_leads_mes !== null ? r2(bm_leads_mes / 4.33) : null;
-    const bm_appt_sem = meta_usada !== null && meta_usada !== undefined ? r2(meta_usada / 4.33) : null;
+    const bm_leads_sem = bm_leads_mes !== null ? r2(porPeriodo(bm_leads_mes)) : null;
+    const bm_appt_sem = meta_usada !== null && meta_usada !== undefined ? r2(porPeriodo(meta_usada)) : null;
     const div = (v, base) => (base ? r2(v / base) : null);
-    const ritmo_leads = div(W0.leads, bm_leads_mes !== null ? bm_leads_mes / 4.33 : 0);
-    const ritmo_leads_w1 = div(W1.leads, bm_leads_mes !== null ? bm_leads_mes / 4.33 : 0);
-    const ritmo_leads_w2 = div(W2.leads, bm_leads_mes !== null ? bm_leads_mes / 4.33 : 0);
-    const ritmo_appts = div(A.w0, meta_usada ? meta_usada / 4.33 : 0);
+    const ritmo_leads = div(W0.leads, bm_leads_mes !== null ? porPeriodo(bm_leads_mes) : 0);
+    const ritmo_leads_w1 = div(W1.leads, bm_leads_mes !== null ? porPeriodo(bm_leads_mes) : 0);
+    const ritmo_leads_w2 = div(W2.leads, bm_leads_mes !== null ? porPeriodo(bm_leads_mes) : 0);
+    const ritmo_appts = div(A.w0, meta_usada ? porPeriodo(meta_usada) : 0);
     const classe_leads = classe(ritmo_leads);
     const classe_appts = classe(ritmo_appts);
 
@@ -395,7 +430,12 @@ export function construir(dados, params) {
     /* Cenário — decidido pelo dado, nesta ordem. */
     let cenario_cod;
     if (w0_spend === 0) cenario_cod = "F";
-    else if (w0_spend >= 150 && W0.leads === 0) cenario_cod = "E";
+    // O piso do E é semanal ($150 em 7 dias) e existe para dizer "gastou o
+    // bastante para zero lead ser incidente, não ruído". Num recorte MENOR
+    // ele encolhe junto — $50 num dia só é ruído com o piso cheio e
+    // incidente com o piso do dia. Num recorte MAIOR ele NÃO cresce: um mês
+    // com investimento e nenhum lead é incidente com qualquer régua.
+    else if (w0_spend >= 150 * Math.min(1, semanas) && W0.leads === 0) cenario_cod = "E";
     else if (dias_veiculacao !== null && dias_veiculacao < 21) cenario_cod = "G";
     else if (
       ritmo_leads !== null &&
@@ -461,7 +501,11 @@ export function construir(dados, params) {
         semana: {
           inicio: j.w0_ini,
           fim: j.w0_fim,
-          label: `Mon, ${mm_dd(j.w0_ini)} to Sun, ${mm_dd(j.w0_fim)}`,
+          dias: j.dias,
+          // `padrao: false` avisa quem escreve o texto que a palavra "semana"
+          // está errada ali — a redação troca por "período".
+          padrao,
+          label: rotuloPeriodo(j.w0_ini, j.w0_fim),
           timezone: tz,
         },
         midia: {
@@ -482,6 +526,7 @@ export function construir(dados, params) {
           semana_anterior: {
             inicio: j.w1_ini,
             fim: j.w1_fim,
+            dias: j.dias,
             spend: w1_spend,
             leads: W1.leads,
             cpl: w1_cpl,
@@ -561,7 +606,7 @@ export function construir(dados, params) {
 /* ══════════════════════ leitura: as 5 consultas do contrato ══════════════════ */
 
 export async function carregar(http, base, headers, params) {
-  const j = janela(params.week_start);
+  const j = janela(params.week_start, params.week_end);
   const lo = menor(j.w2_ini, j.mes_ini);
 
   const clientsRaw = await fetchAll(http, base, headers, "clients", {

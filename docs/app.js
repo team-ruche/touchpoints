@@ -68,10 +68,33 @@ async function chamar(rota, corpo) {
   return j;
 }
 
-/* ─────────────────────────────── semana ──────────────────────────────── */
+/* ────────────────────────── semana e período ─────────────────────────── */
 
 const iso = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** Ontem. É o teto de qualquer recorte: o dia de hoje ainda está entrando
+ *  no `ad_insights`, e meio dia de investimento vira número menor do que
+ *  foi — o mesmo tipo de erro que o projeto existe para não cometer. */
+function ontem(hoje = new Date()) {
+  const d = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 1);
+  return iso(d);
+}
+function somaDias(s, n) {
+  const [y, m, dd] = s.split("-").map(Number);
+  return iso(new Date(y, m - 1, dd + n));
+}
+/** Quantos dias tem o intervalo, contando as duas pontas. */
+function diasEntre(a, b) {
+  const [y1, m1, d1] = a.split("-").map(Number);
+  const [y2, m2, d2] = b.split("-").map(Number);
+  return Math.round((new Date(y2, m2 - 1, d2) - new Date(y1, m1 - 1, d1)) / 86400000) + 1;
+}
+const diaDaSemanaDe = (s) => {
+  const [y, m, dd] = s.split("-").map(Number);
+  return new Date(y, m - 1, dd).getDay();
+};
+const primeiroDoMes = (s) => s.slice(0, 8) + "01";
 
 /** Segunda-feira da última semana FECHADA. A semana corrente nunca entra. */
 function ultimaSemanaFechada(hoje = new Date()) {
@@ -98,14 +121,22 @@ function somaSemanas(ws, n) {
   d.setDate(d.getDate() + n * 7);
   return iso(d);
 }
-/** "Mon, 08/17 to Sun, 08/23" — o mesmo rótulo que o canal usa há 16 semanas. */
-function rotuloSemana(ws) {
-  const [y, m, dd] = ws.split("-").map(Number);
-  const a = new Date(y, m - 1, dd);
-  const b = new Date(y, m - 1, dd + 6);
-  const f = (d) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
-  return `Mon, ${f(a)} to Sun, ${f(b)}`;
+const DOW_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Mon, 08/17 to Sun, 08/23" — o mesmo rótulo que o canal usa há 16 semanas.
+ *  Num recorte livre o dia da semana é o de verdade das duas pontas.
+ *  ⚠️ `src/contrato.js` tem a mesma função (arquivos separados, sem import):
+ *  mexeu aqui, mexa lá — `testar_app.mjs` compara as duas. */
+function rotuloPeriodo(ini, fim) {
+  const f = (s) => `${s.slice(5, 7)}/${s.slice(8, 10)}`;
+  return `${DOW_EN[diaDaSemanaDe(ini)]}, ${f(ini)} to ${DOW_EN[diaDaSemanaDe(fim)]}, ${f(fim)}`;
 }
+function rotuloSemana(ws) {
+  return rotuloPeriodo(ws, domingoDa(ws));
+}
+/** Semana fechada de verdade: começa numa segunda e tem 7 dias. Só ela pode
+ *  ser chamada de "semana" no texto e no rótulo do canal. */
+const ehSemanaPadrao = (ini, fim) => diaDaSemanaDe(ini) === 1 && fim === domingoDa(ini);
 
 /* ───────────────── cenários (seções 8.3 a 8.5 da pesquisa) ───────────────── */
 
@@ -253,7 +284,8 @@ function camposCorrigiveis(p) {
       rotulo: `Leads — ${nome}`, tipo: "int", valor: m.leads ?? 0 });
   }
   campos.push({ id: "agendamento.semana", grupo: "Semana",
-    rotulo: "Agendamentos na semana", tipo: "int", valor: p.agendamento.semana });
+    rotulo: `Agendamentos ${p.semana.padrao === false ? "no período" : "na semana"}`,
+    tipo: "int", valor: p.agendamento.semana });
 
   campos.push({ id: "mes.spend", grupo: "Mês", rotulo: "Investimento no mês", tipo: "money", valor: p.mes.spend });
   campos.push({ id: "mes.leads", grupo: "Mês", rotulo: "Leads no mês", tipo: "int", valor: p.mes.leads });
@@ -366,11 +398,20 @@ function aplicarCorrecoes(p, c) {
     q.mes.meta_mensal = q.agendamento.meta_usada;
   }
 
-  /* 4. ritmo contra o benchmark — as mesmas divisões de contrato.js */
+  /* 4. ritmo contra o benchmark — as mesmas divisões de contrato.js,
+        inclusive a fatia do período: o benchmark é MENSAL e, num recorte de
+        N dias, a fatia é (mensal / 4,33) × N/7. Recalcular aqui com o
+        divisor de uma semana devolveria um ritmo que contradiz o contrato
+        que a própria tela acabou de exibir. */
   const bm = q.benchmark;
-  if (q.agendamento.meta_usada) bm.bm_appt_semana = r2(q.agendamento.meta_usada / 4.33);
-  bm.ritmo_leads = bm.bm_leads_mes ? r2(t.leads / (bm.bm_leads_mes / 4.33)) : null;
-  bm.ritmo_appts = q.agendamento.meta_usada ? r2(q.agendamento.semana / (q.agendamento.meta_usada / 4.33)) : null;
+  const semanasP = (q.semana && q.semana.dias ? q.semana.dias : 7) / 7;
+  const porPeriodo = (mensal) => (mensal / 4.33) * semanasP;
+  if (q.agendamento.meta_usada) bm.bm_appt_semana = r2(porPeriodo(q.agendamento.meta_usada));
+  if (bm.bm_leads_mes) bm.bm_leads_semana = r2(porPeriodo(bm.bm_leads_mes));
+  bm.ritmo_leads = bm.bm_leads_mes ? r2(t.leads / porPeriodo(bm.bm_leads_mes)) : null;
+  bm.ritmo_appts = q.agendamento.meta_usada
+    ? r2(q.agendamento.semana / porPeriodo(q.agendamento.meta_usada))
+    : null;
   bm.classe_leads = classeRitmo(bm.ritmo_leads);
   bm.classe_appts = classeRitmo(bm.ritmo_appts);
   bm.cpl_vs_bm = bm.bm_cpl && t.cpl !== null ? r2(t.cpl / bm.bm_cpl) : null;
@@ -415,12 +456,18 @@ const linhaCorrecao = (x) => `${x.rotulo}: ${x.de} → ${x.para}`;
  *  isso o diálogo trava o salvar em vez de só avisar. */
 function incoerencias(p) {
   const fora = [];
+  // A regra vale enquanto o mês CONTÉM o período. Num recorte livre que
+  // atravessa a virada (20/08 a 05/09) o "No mês" é o mês do último dia e
+  // é MENOR que o período de propósito — acusar aí seria alarme falso, e
+  // alarme falso é o que faz ninguém olhar para o alarme verdadeiro.
+  if (p.mes.inicio && p.mes.inicio > p.semana.inicio) return fora;
+  const rec = p.semana.padrao === false ? "o período" : "a semana";
   if (p.mes.leads < p.midia.total.leads)
-    fora.push(`o mês está com ${p.mes.leads} leads e a semana com ${p.midia.total.leads}`);
+    fora.push(`o mês está com ${p.mes.leads} leads e ${rec} com ${p.midia.total.leads}`);
   if (p.mes.agendamentos < p.agendamento.semana)
-    fora.push(`o mês está com ${p.mes.agendamentos} agendamentos e a semana com ${p.agendamento.semana}`);
+    fora.push(`o mês está com ${p.mes.agendamentos} agendamentos e ${rec} com ${p.agendamento.semana}`);
   if (p.mes.spend < p.midia.total.spend - 0.01)
-    fora.push(`o mês está com ${money(p.mes.spend)} investidos e a semana com ${money(p.midia.total.spend)}`);
+    fora.push(`o mês está com ${money(p.mes.spend)} investidos e ${rec} com ${money(p.midia.total.spend)}`);
   return fora;
 }
 
@@ -525,8 +572,14 @@ function rascunhoDeTexto(p) {
 
 const PLATAFORMA_LABEL = { meta: "Meta Ads", google: "Google Ads", glsa: "Google Local Services" };
 
-function montarMensagem(p, texto) {
-  const l = ["Olá, Pessoal! Tudo bem? 👋", "", `📌 Weekly Touch Point: ${p.semana.label}`, ""];
+/**
+ * A mensagem em PEDAÇOS: o que veio do contrato (fixo, não editável) e os
+ * três campos de texto (editáveis). A tela monta o cartão com isto para que
+ * o gestor edite dentro da mensagem final, e `montarMensagem` é a mesma
+ * lista colada — não existe uma segunda montagem para divergir da primeira.
+ */
+function partesMensagem(p, texto, todosOsCampos) {
+  const l = ["Olá, Pessoal! Tudo bem? 👋", "", `📌 ${p.semana.padrao === false ? "" : "Weekly "}Touch Point: ${p.semana.label}`, ""];
 
   // Plataforma zerada nunca aparece: era o "Google Ads: $0,00" para quem
   // investe que a v1 evita bloqueando o cliente (D6).
@@ -541,8 +594,8 @@ function montarMensagem(p, texto) {
   }
   if (!plats.length) l.push("💰 Sem investimento no período.");
 
-  // Agendamento REAL da semana. Antes esta linha imprimia a meta contratada.
-  l.push(`📅 Agendamentos na semana: ${p.agendamento.semana}`);
+  // Agendamento REAL do período. Antes esta linha imprimia a meta contratada.
+  l.push(`📅 Agendamentos ${p.semana.padrao === false ? "no período" : "na semana"}: ${p.agendamento.semana}`);
   l.push("");
 
   const meta = p.agendamento.meta_usada != null ? Math.round(p.agendamento.meta_usada) : null;
@@ -561,18 +614,29 @@ function montarMensagem(p, texto) {
           ? ` de ${meta} contratados`
           : ` de ${meta} — referência para a sua vertical`),
   );
-  l.push("");
-  l.push("Como foi:");
-  l.push(texto.comoFoi.trim());
-  l.push("");
-  l.push("🚀 Próximo passo:");
-  l.push(texto.proximoPasso.trim());
-  if (texto.pedido.trim()) {
-    l.push("");
-    l.push("🤝 O que precisamos de você:");
-    l.push(texto.pedido.trim());
+  const partes = [
+    { tipo: "fixo", texto: l.join("\n") },
+    { tipo: "campo", k: "comoFoi", rotulo: "Como foi:", dica: "máx. 2 frases", linhas: 4, valor: texto.comoFoi.trim() },
+    {
+      tipo: "campo", k: "proximoPasso", rotulo: "🚀 Próximo passo:",
+      dica: "1 a 2 frases, com data", linhas: 2, valor: texto.proximoPasso.trim(),
+    },
+  ];
+  // O bloco do pedido só existe quando há pedido — no cartão ele aparece
+  // sempre (vazio é editável), na mensagem não.
+  if (texto.pedido.trim() || todosOsCampos) {
+    partes.push({
+      tipo: "campo", k: "pedido", rotulo: "🤝 O que precisamos de você:",
+      dica: "1 frase", linhas: 2, valor: texto.pedido.trim(),
+    });
   }
-  return l.join("\n");
+  return partes;
+}
+
+function montarMensagem(p, texto) {
+  return partesMensagem(p, texto)
+    .map((x) => (x.tipo === "fixo" ? x.texto : `${x.rotulo}\n${x.valor}`))
+    .join("\n\n");
 }
 
 /* ─────────────── checklist antes de publicar (seção 8.8) ─────────────── */
@@ -584,12 +648,13 @@ function checklist(p, texto) {
   const plats = Object.entries(p.midia.por_plataforma);
   const t = p.midia.total;
   const corr = p.correcao || null;
+  const rec = p.semana.padrao === false ? "do período" : "da semana";
   const itens = [
     { id: "proveniencia", label: "Todo número exibido tem proveniência registrada",
       ok: Object.keys(p.proveniencia ?? {}).length > 0 },
     { id: "contrato", label: "Nenhum número veio de campo de contrato disfarçado de resultado",
       ok: (p.agendamento.criterio_data ?? "").includes("occurred_at") },
-    { id: "mes", label: "Agendamento da semana e acumulado do mês estão presentes",
+    { id: "mes", label: `Agendamento ${rec} e acumulado do mês estão presentes`,
       ok: p.agendamento.semana != null && p.agendamento.mes_ate_domingo != null },
     { id: "zerada", label: "Só aparecem plataformas com investimento > 0",
       ok: plats.every(([, m]) => m.spend > 0) },
@@ -622,7 +687,7 @@ function checklist(p, texto) {
   }
   itens.push({
     id: "coerencia",
-    label: "Semana e mês fecham entre si — o mês contém a semana",
+    label: `${p.semana.padrao === false ? "Período" : "Semana"} e mês fecham entre si — o mês contém ${rec}`,
     ok: incoerencias(p).length === 0,
   });
   return itens;
@@ -639,7 +704,12 @@ function pendencias(texto) {
 const FILTROS_PADRAO = { semaforo: null, gestor: "", busca: "", cenario: "", estado: "", soCorrigidos: false };
 
 const S = {
-  semana: lerJSON("tp_semana", null) || ultimaSemanaFechada(),
+  // `semana` continua sendo o PRIMEIRO dia do recorte — o nome ficou porque
+  // a semana fechada é o caso normal e porque os testes leem este campo.
+  semana: lerJSON("tp_periodo", {}).inicio || lerJSON("tp_semana", null) || ultimaSemanaFechada(),
+  // `fim` nulo = semana fechada de 7 dias a partir de `semana`. Só um recorte
+  // livre grava um valor aqui.
+  fim: lerJSON("tp_periodo", {}).fim || null,
   linhas: [],
   leitura: null,
   sel: null,
@@ -649,6 +719,36 @@ const S = {
   erro: null,
   gerando: new Set(),
 };
+
+/* ── o recorte carregado, em um lugar só ────────────────────────────────
+ *
+ * Tudo que era "a semana" passa por aqui. `fimP()` cai na semana fechada
+ * quando ninguém escolheu um fim, e `chaveP()` devolve exatamente a chave
+ * antiga (só o `week_start`) nesse caso — é isso que preserva os rascunhos,
+ * as correções e o registro de envio que já estão no navegador de quem usa
+ * a tela desde 30/08. */
+const fimP = () => (S.fim && S.fim >= S.semana ? S.fim : domingoDa(S.semana));
+const diasP = () => diasEntre(S.semana, fimP());
+const periodoPadrao = () => ehSemanaPadrao(S.semana, fimP());
+const chaveP = () => (periodoPadrao() ? S.semana : `${S.semana}..${fimP()}`);
+const rotuloP = () => rotuloPeriodo(S.semana, fimP());
+
+/** Troca o recorte e recarrega. Um caminho só: prev/next, calendário e
+ *  atalhos passam todos por aqui, e nenhum deles pode passar do teto. */
+function irPara(inicio, fim, { silencioso } = {}) {
+  const f = fim && fim >= inicio ? fim : domingoDa(inicio);
+  if (f > ontem()) {
+    if (!silencioso) aviso("O período tem de terminar ontem ou antes — o dia de hoje ainda não fechou.");
+    return false;
+  }
+  if (inicio === S.semana && f === fimP()) return false;
+  S.semana = inicio;
+  S.fim = f;
+  gravarJSON("tp_periodo", { inicio: S.semana, fim: S.fim });
+  gravarJSON("tp_semana", S.semana); // compatibilidade com a versão anterior
+  carregarSemana();
+  return true;
+}
 
 function salvarFiltros() {
   gravarJSON("tp_filtros", {
@@ -734,21 +834,21 @@ function salvarCorrecao(ws, cid, c) {
 }
 
 const temCorrecao = (r) => {
-  const c = correcaoDe(S.semana, r.client_id);
+  const c = correcaoDe(chaveP(), r.client_id);
   return Boolean(c && Object.keys(c.campos || {}).length);
 };
 
 /** O contrato COM as correções aplicadas. TUDO na tela passa por aqui — se
  *  duas partes da tela lessem payloads diferentes, o texto citaria um número
  *  e a mensagem imprimiria outro. */
-const payloadDe = (r) => aplicarCorrecoes(r.payload, correcaoDe(S.semana, r.client_id));
+const payloadDe = (r) => aplicarCorrecoes(r.payload, correcaoDe(chaveP(), r.client_id));
 
 /** As correções da semana inteira: prévia do envio, nota do CS e CSV. */
 function correcoesDaSemana() {
   return S.linhas
     .filter(temCorrecao)
     .map((r) => {
-      const c = correcaoDe(S.semana, r.client_id);
+      const c = correcaoDe(chaveP(), r.client_id);
       return {
         cliente: r.client_name,
         client_id: r.client_id,
@@ -763,7 +863,7 @@ function correcoesDaSemana() {
  *  canal do cliente: quem imprime é o workflow, e só no destino `cs`. */
 function notaInternaDe(r) {
   if (!temCorrecao(r)) return null;
-  const c = correcaoDe(S.semana, r.client_id);
+  const c = correcaoDe(chaveP(), r.client_id);
   return (
     "número corrigido à mão — " +
     resumoCorrecao(r.payload, c).map(linhaCorrecao).join("; ") +
@@ -778,7 +878,7 @@ function notaInternaDe(r) {
  *  quando um fato não está no banco (o motivo de uma pausa, por exemplo) e
  *  o que o gestor já respondeu na lista fechada. */
 function textoDe(r) {
-  const d = rascunhoDe(S.semana, r.client_id);
+  const d = rascunhoDe(chaveP(), r.client_id);
   if (d && d.texto)
     return {
       texto: d.texto,
@@ -802,6 +902,24 @@ function aviso(msg, tom = "warning") {
   aviso._t = setTimeout(() => (el.hidden = true), 6000);
 }
 
+/** O recorte DIGITADO nos dois calendários, que só vira o recorte carregado
+ *  quando alguém clica em Aplicar. Separar os dois é o que impede a tela de
+ *  disparar duas leituras enquanto a pessoa escolhe a segunda data. */
+function pendente() {
+  return { de: (S.pend && S.pend.de) || S.semana, ate: (S.pend && S.pend.ate) || fimP() };
+}
+
+function pintarAplicar() {
+  const b = $("#btn-aplicar");
+  if (!b) return;
+  const { de, ate } = pendente();
+  const mudou = de !== S.semana || ate !== fimP();
+  const invalido = de > ate ? "o último dia é antes do primeiro" : ate > ontem() ? "o período tem de terminar ontem ou antes — hoje ainda não fechou" : null;
+  b.disabled = !mudou || Boolean(invalido);
+  b.classList.toggle("primary", mudou && !invalido);
+  b.title = invalido || (mudou ? `carregar ${de} → ${ate} (${diasEntre(de, ate)} dias)` : "é o período já carregado");
+}
+
 function render() {
   renderBarra();
   renderStrip();
@@ -810,8 +928,12 @@ function render() {
 }
 
 function renderBarra() {
-  $("#weeklabel").textContent = rotuloSemana(S.semana);
-  $("#weekiso").textContent = S.semana;
+  $("#weeklabel").textContent = rotuloP();
+  // Um recorte que não é semana fechada tem de gritar: o texto muda por
+  // causa disso (“semana” vira “período”) e o benchmark é proporcional.
+  $("#weekiso").innerHTML = periodoPadrao()
+    ? esc(S.semana)
+    : `${esc(S.semana)} → ${esc(fimP())} <span class="chip info">período livre · ${diasP()} dias</span>`;
   const n = S.linhas.length;
   $("#contagem").textContent = S.carregando
     ? "carregando…"
@@ -819,12 +941,18 @@ function renderBarra() {
       ? `${n} clientes elegíveis${S.leitura ? ` · ${S.leitura.ad_insights} linhas de ad_insights, ${S.leitura.agendamentos} agendamentos lidos em ${(S.leitura.ms / 1000).toFixed(1)}s` : ""}`
       : "";
 
-  // calendário: qualquer dia serve, a tela cai na segunda daquela semana
-  const data = $("#f-data");
-  if (data.value !== S.semana) data.value = S.semana;
-  // O teto é o DOMINGO que fechou a última semana, não a segunda dela: quem
-  // procura "a semana do dia 22" tem de conseguir digitar 22.
-  data.max = domingoDa(ultimaSemanaFechada());
+  // Calendário: duas pontas livres. O teto é ONTEM — o dia de hoje ainda
+  // está entrando no ad_insights e sairia menor do que foi.
+  const de = $("#f-de");
+  const ate = $("#f-ate");
+  const teto = ontem();
+  de.max = teto;
+  ate.max = teto;
+  const pend = pendente();
+  if (de.value !== pend.de) de.value = pend.de;
+  if (ate.value !== pend.ate) ate.value = pend.ate;
+  $("#f-atalho").value = "";
+  pintarAplicar();
 
   // gestores vêm da semana carregada, não de uma lista fixa
   const sel = $("#f-gestor");
@@ -840,11 +968,11 @@ function renderBarra() {
   $("#f-estado").value = S.estado;
   $("#f-limpar").disabled = !filtrosAtivos();
 
-  const envs = enviosDaSemana(S.semana);
-  const csEnv = CS.filter((c) => envioCSDe(S.semana, c.id));
+  const envs = enviosDaSemana(chaveP());
+  const csEnv = CS.filter((c) => envioCSDe(chaveP(), c.id));
   $("#envio-estado").innerHTML =
     (envs.length
-      ? `<span class="badge-env">● publicado nesta semana: ${envs.map((e) => esc(e.gestor)).join(", ")}</span> `
+      ? `<span class="badge-env">● publicado neste período: ${envs.map((e) => esc(e.gestor)).join(", ")}</span> `
       : "") +
     (csEnv.length
       ? `<span class="badge-env" style="background:var(--info-bg);border-color:var(--info-bd);color:var(--info)">● CS: ${csEnv
@@ -898,7 +1026,7 @@ function renderStrip() {
  *  "estado" usa e o que decide se o cliente entra no envio. */
 function estadoDe(r) {
   if (!r.pode_gerar) return "bloqueado";
-  const d = rascunhoDe(S.semana, r.client_id);
+  const d = rascunhoDe(chaveP(), r.client_id);
   if (!d || !d.texto) return "sem-texto";
   const { texto, origem } = textoDe(r);
   if (pendencias(texto).length) return "pendente";
@@ -983,7 +1111,7 @@ function renderCartao() {
     return;
   }
   if (!S.linhas.length) {
-    el.innerHTML = `<p class="meta">Escolha uma semana e clique em <b>Carregar</b>.</p>`;
+    el.innerHTML = `<p class="meta">Escolha um período e clique em <b>Recarregar</b>.</p>`;
     return;
   }
   const r = S.linhas.find((x) => x.client_id === S.sel) || visiveis()[0];
@@ -994,7 +1122,7 @@ function renderCartao() {
   S.sel = r.client_id;
 
   const p = payloadDe(r);
-  const corr = correcaoDe(S.semana, r.client_id);
+  const corr = correcaoDe(chaveP(), r.client_id);
   const itensCorr = corr ? resumoCorrecao(r.payload, corr) : [];
   const t = p.midia.total;
   const ag = p.agendamento;
@@ -1042,7 +1170,7 @@ function renderCartao() {
 
     <div class="sec">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-        <h3 style="margin:0">Semana — ${plats.length ? plats.map(([k]) => PLATAFORMA_LABEL[k] ?? k).join(" + ") : "sem investimento"}</h3>
+        <h3 style="margin:0">${periodoPadrao() ? "Semana" : "Período"} — ${plats.length ? plats.map(([k]) => PLATAFORMA_LABEL[k] ?? k).join(" + ") : "sem investimento"}</h3>
         <button id="btn-corrigir">${itensCorr.length ? "Revisar correção" : "Corrigir números"}</button>
         <span class="fhint" style="margin-left:auto">o número vem do banco — corrija só quando o banco estiver errado</span>
       </div>
@@ -1072,12 +1200,12 @@ function renderCartao() {
     </div>
 
     <div class="sec">
-      <h3>Contra a semana anterior</h3>
+      <h3>Contra o período anterior — os ${diasP()} dias imediatamente antes</h3>
       <div class="nums">
-        ${numero("Δ Spend", money(p.comparacao.var_spend), `semana ${p.comparacao.semana_anterior.inicio} a ${p.comparacao.semana_anterior.fim}`)}
+        ${numero("Δ Spend", money(p.comparacao.var_spend), `período anterior: ${p.comparacao.semana_anterior.inicio} a ${p.comparacao.semana_anterior.fim}`)}
         ${numero("Δ Leads", (p.comparacao.var_leads > 0 ? "+" : "") + p.comparacao.var_leads, "diferença de leads")}
         ${numero("Δ Agend.", (p.comparacao.var_appts > 0 ? "+" : "") + p.comparacao.var_appts, "diferença de agendamentos")}
-        ${numero("CPL anterior", money(p.comparacao.semana_anterior.cpl), "CPL da semana anterior")}
+        ${numero("CPL anterior", money(p.comparacao.semana_anterior.cpl), "CPL do período anterior")}
       </div>
     </div>
 
@@ -1110,7 +1238,7 @@ function renderCartao() {
     </div>
 
     <div class="sec">
-      <h3>Contexto do MB — otimizações registradas na semana</h3>
+      <h3>Contexto do MB — otimizações registradas no período</h3>
       ${
         p.contexto_mb.length
           ? `<ul style="margin:0;padding-left:18px;font-size:12.5px">${p.contexto_mb
@@ -1126,12 +1254,30 @@ function renderCartao() {
     </div>
 
     <div class="sec">
+      <h3>Checklist antes de publicar (8.8)</h3>
+      <div class="check">
+        ${chk
+          .map(
+            (c) =>
+              `<div><span class="${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "!"}</span>
+               <span class="txt ${c.ok ? "done" : ""}">${esc(c.label)}${c.manual ? " (confere você)" : ""}</span></div>`,
+          )
+          .join("")}
+      </div>
+    </div>
+
+    <!-- ── o touchpoint final, editável NO LUGAR ─────────────────────────
+         Os três campos deixaram de morar numa seção separada lá em cima:
+         eles são as partes editáveis desta mensagem. O que está fora deles
+         é o que a tela não deixa digitar — número, e número vem do
+         contrato. Editar aqui é ver o resultado no mesmo lugar. -->
+    <div class="sec">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
-        <h3 style="margin:0">Redação</h3>
-        <span class="chip ${origem === "regua" ? "info" : ""}">${origem === "regua" ? "escrita pela régua do cenário" : origem === "rascunho" ? "editada por você" : "esqueleto"}</span>
+        <h3 style="margin:0">Touchpoint final — o que vai para o cliente</h3>
+        <span class="chip ${origem === "regua" ? "info" : ""}">${origem === "regua" ? "escrito pela régua do cenário" : origem === "rascunho" ? "editado por você" : "esqueleto"}</span>
         <button id="btn-ia" ${gerando || !r.pode_gerar ? "disabled" : ""}>${gerando ? "escrevendo…" : "Escrever"}</button>
         <button id="btn-reset" class="ghost">Voltar ao esqueleto</button>
-        <span class="fhint" style="margin-left:auto">sem modelo de linguagem · $0.00</span>
+        <span class="fhint" style="margin-left:auto">os campos com borda tracejada são seus · $0.00 de API</span>
       </div>
       ${
         lacunas.length
@@ -1157,19 +1303,21 @@ function renderCartao() {
              </div>`
           : ""
       }
-      ${["comoFoi", "proximoPasso", "pedido"]
-        .map((k, i) => {
-          const rot = ["Como foi", "🚀 Próximo passo", "🤝 O que precisamos de você"][i];
-          return `<div class="field">
-            <div class="fh"><span class="fl">${rot}</span>
-              <span class="fhint">${k === "comoFoi" ? "máx. 2 frases" : k === "proximoPasso" ? "1 a 2 frases, com data" : "1 frase"}</span></div>
-            <textarea class="box ed" data-k="${k}" rows="${k === "comoFoi" ? 4 : 2}">${esc(texto[k])}</textarea>
-          </div>`;
-        })
-        .join("")}
+      <div class="msg viva">
+        ${partesMensagem(p, texto, true)
+          .map((x) =>
+            x.tipo === "fixo"
+              ? `<div class="fixo">${esc(x.texto)}</div>`
+              : `<div class="fixo rot">${esc(x.rotulo)}</div>
+                 <div class="campo"><span class="tag">${esc(x.dica)}</span>
+                   <textarea class="box ed" data-k="${x.k}" rows="${x.linhas}"
+                     placeholder="${esc(x.rotulo)}">${esc(x.valor)}</textarea></div>`,
+          )
+          .join("")}
+      </div>
       ${
         pend.length
-          ? `<div class="callout critical"><b>${pend.length} marcador(es) por preencher.</b>
+          ? `<div class="callout critical" style="margin-top:10px"><b>${pend.length} marcador(es) por preencher.</b>
              Enquanto houver <span class="mono">[…]</span> no texto, o envio fica travado — é o comportamento
              correto: a informação não está no banco.
              <div style="margin-top:6px" class="mono">${pend.map(esc).join(" · ")}</div></div>`
@@ -1177,13 +1325,13 @@ function renderCartao() {
       }
       ${
         incoerencia.length
-          ? `<div class="callout critical"><b>Semana e mês não fecham:</b>
+          ? `<div class="callout critical" style="margin-top:10px"><b>Período e mês não fecham:</b>
              ${esc(incoerencia.join(" · "))}. Abra <b>Corrigir números</b> e acerte o mês também.</div>`
           : ""
       }
       ${
         citaAntigo.length
-          ? `<div class="callout critical"><b>O texto ainda cita ${esc(citaAntigo.join(", "))}</b> —
+          ? `<div class="callout critical" style="margin-top:10px"><b>O texto ainda cita ${esc(citaAntigo.join(", "))}</b> —
              número de antes da correção. Reescreva pela régua ou corrija a frase à mão.</div>`
           : ""
       }
@@ -1194,35 +1342,34 @@ function renderCartao() {
              ${proib.map((x) => `“${esc(x.termo)}” → ${esc(x.troque)}`).join(" · ")}</div>`
           : ""
       }
-    </div>
 
-    <div class="sec">
-      <h3>Checklist antes de publicar (8.8)</h3>
-      <div class="check">
-        ${chk
-          .map(
-            (c) =>
-              `<div><span class="${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "!"}</span>
-               <span class="txt ${c.ok ? "done" : ""}">${esc(c.label)}${c.manual ? " (confere você)" : ""}</span></div>`,
-          )
-          .join("")}
+      <div class="acoes">
+        <button id="btn-copiar" class="ghost">Copiar mensagem</button>
+        <button id="btn-cs">Enviar para CS</button>
+        <button id="btn-envio-daqui" class="primary">Revisar e enviar</button>
+        <span class="fhint">
+          “Enviar para CS” manda para a conversa privada da Eduarda ou da Amanda;
+          “Revisar e enviar” abre a prévia do canal que o cliente lê.
+        </span>
       </div>
-    </div>
-
-    <div class="sec">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-        <h3 style="margin:0">Mensagem que vai para o canal</h3>
-        <button id="btn-copiar" class="ghost">Copiar</button>
-      </div>
-      <div class="msg">${esc(mensagem)}</div>
     </div>
   `;
 
+  /* A caixa cresce com o texto: dentro da mensagem, uma barra de rolagem
+     escondendo a última frase é a forma mais fácil de publicar meia frase. */
+  const crescer = (ta) => {
+    // `height:0` e não `auto`: com `auto` o navegador devolve a altura do
+    // atributo `rows`, e a caixa de 4 linhas nunca encolhe para 2.
+    ta.style.height = "0px";
+    ta.style.height = ta.scrollHeight + 2 + "px";
+  };
+  for (const ta of document.querySelectorAll(".msg textarea.ed")) crescer(ta);
   for (const ta of document.querySelectorAll("textarea.ed")) {
     ta.oninput = () => {
+      crescer(ta);
       const novo = { ...texto, [ta.dataset.k]: ta.value };
       // editar à mão não descarta as lacunas nem as respostas já dadas
-      salvarRascunho(S.semana, r.client_id, { texto: novo, origem: "rascunho", lacunas, escolhas });
+      salvarRascunho(chaveP(), r.client_id, { texto: novo, origem: "rascunho", lacunas, escolhas });
       clearTimeout(renderCartao._t);
       renderCartao._t = setTimeout(() => {
         const pos = ta.selectionStart;
@@ -1252,7 +1399,7 @@ function renderCartao() {
   const bR = $("#btn-reset");
   if (bR)
     bR.onclick = () => {
-      apagarRascunho(S.semana, r.client_id);
+      apagarRascunho(chaveP(), r.client_id);
       render();
     };
   const bC = $("#btn-copiar");
@@ -1261,6 +1408,11 @@ function renderCartao() {
       await navigator.clipboard.writeText(mensagem);
       aviso("Mensagem copiada.", "info");
     };
+  // Os dois envios moram aqui embaixo, ao lado do texto que eles mandam.
+  const bCs = $("#btn-cs");
+  if (bCs) bCs.onclick = abrirCS;
+  const bEnv = $("#btn-envio-daqui");
+  if (bEnv) bEnv.onclick = montarEnvio;
 }
 
 /* ═══════════════════════════════ ações ═══════════════════════════════ */
@@ -1271,7 +1423,7 @@ async function carregarSemana() {
   S.linhas = [];
   render();
   try {
-    const j = await chamar("mb-touchpoint-week", { week_start: S.semana, tz: cfg.tz });
+    const j = await chamar("mb-touchpoint-week", { week_start: S.semana, week_end: fimP(), tz: cfg.tz });
     S.linhas = j.linhas || [];
     S.leitura = j.leitura || null;
     S.sel = S.linhas[0]?.client_id ?? null;
@@ -1303,7 +1455,7 @@ async function escrever(r, escolhas, silencioso) {
       pedido: j.pedido_cliente ?? "",
     };
     if (!texto.comoFoi) throw new Error("resposta sem os três campos: " + JSON.stringify(j).slice(0, 200));
-    salvarRascunho(S.semana, r.client_id, {
+    salvarRascunho(chaveP(), r.client_id, {
       texto,
       origem: "regua",
       lacunas: j.lacunas || [],
@@ -1337,7 +1489,7 @@ async function escrever(r, escolhas, silencioso) {
  *  com a Messages API isto era uma decisão de custo, agora é um clique. */
 async function escreverTodos() {
   const alvo = S.linhas.filter((r) => r.pode_gerar);
-  if (!alvo.length) return aviso("Nenhum cliente elegível nesta semana.");
+  if (!alvo.length) return aviso("Nenhum cliente elegível neste período.");
   let feitos = 0;
   let comPergunta = 0;
   let falhas = 0;
@@ -1402,8 +1554,9 @@ async function montarEnvio() {
       const j = await chamar("mb-touchpoint-envio", {
         gestor,
         blocos,
-        periodo: rotuloSemana(S.semana),
+        periodo: rotuloP(),
         week_start: S.semana,
+        week_end: fimP(),
         // sem `confirmar: true` — prévia. Publicar é o botão do rodapé.
       });
       saidas.push({ ...j, gestor, blocos });
@@ -1417,12 +1570,12 @@ async function montarEnvio() {
 function abrirEnvio(saidas) {
   const dlg = $("#dlg-envio");
   const boas = saidas.filter((s) => s.ok !== false);
-  const jaEnviados = boas.filter((s) => envioDe(S.semana, s.gestor));
+  const jaEnviados = boas.filter((s) => envioDe(chaveP(), s.gestor));
 
   $("#envio-aviso").innerHTML = jaEnviados.length
-    ? `<b style="color:var(--critical)">Atenção: ${jaEnviados.length} gestor(es) já tiveram esta semana publicada</b>
+    ? `<b style="color:var(--critical)">Atenção: ${jaEnviados.length} gestor(es) já tiveram este período publicado</b>
        — ${jaEnviados
-         .map((s) => `${esc(s.gestor)} em ${new Date(envioDe(S.semana, s.gestor).em).toLocaleString("pt-BR")}`)
+         .map((s) => `${esc(s.gestor)} em ${new Date(envioDe(chaveP(), s.gestor).em).toLocaleString("pt-BR")}`)
          .join(" · ")}.
        Publicar de novo manda a mensagem <b>outra vez</b> para o cliente. A pesquisa achou reenvio do mesmo
        bloco em 6 das 16 semanas do canal — é o erro mais comum aqui.`
@@ -1454,7 +1607,7 @@ function abrirEnvio(saidas) {
         ? `<div class="callout critical"><b>${esc(s.gestor || "")}</b><div class="mono">${esc(s.erro)}</div></div>`
         : `<div class="sec"><h3>@${esc(s.gestor)} — ${s.clientes} cliente(s), ${s.caracteres} caracteres
              ${
-               envioDe(S.semana, s.gestor)
+               envioDe(chaveP(), s.gestor)
                  ? `<span class="chip critical">já publicado</span>`
                  : s.dry_run
                    ? `<span class="chip warning">prévia</span>`
@@ -1503,16 +1656,16 @@ function abrirPublicar(saidas) {
     : "";
   $("#pub-resumo").innerHTML = `
     <div class="mesbox">
-      <span class="lbl">${esc(rotuloSemana(S.semana))} · canal Touchpoints</span>
+      <span class="lbl">${esc(rotuloP())} · canal Touchpoints</span>
       <span>Mensagens: <b>${saidas.length}</b> (uma por gestor)</span>
       <span>Clientes: <b>${total}</b></span>
       <span>Gestores: <b>${saidas.map((s) => esc(s.gestor)).join(", ")}</b></span>
     </div>`;
 
-  const repetidos = saidas.filter((s) => envioDe(S.semana, s.gestor));
+  const repetidos = saidas.filter((s) => envioDe(chaveP(), s.gestor));
   $("#pub-jaenviado").innerHTML = repetidos.length
     ? `<div class="callout critical" style="margin-top:10px"><b>REENVIO</b> —
-       ${repetidos.map((s) => esc(s.gestor)).join(", ")} já receberam esta semana. O cliente vai ver a
+       ${repetidos.map((s) => esc(s.gestor)).join(", ")} já receberam este período. O cliente vai ver a
        mensagem duas vezes.</div>`
     : "";
 
@@ -1548,8 +1701,9 @@ async function publicar(saidas, canalEnsaio) {
       const j = await chamar("mb-touchpoint-envio", {
         gestor: s.gestor,
         blocos: s.blocos,
-        periodo: rotuloSemana(S.semana),
+        periodo: rotuloP(),
         week_start: S.semana,
+        week_end: fimP(),
         confirmar: true,
         ...(canalEnsaio ? { channel_id: canalEnsaio } : {}),
       });
@@ -1562,7 +1716,7 @@ async function publicar(saidas, canalEnsaio) {
         // Registrar ANTES de qualquer outra coisa: se o navegador morrer
         // agora, o que não pode acontecer é a mensagem existir no canal e a
         // tela achar que não existe. Errar para o lado de "já enviei".
-        registrarEnvio(S.semana, s.gestor, {
+        registrarEnvio(chaveP(), s.gestor, {
           clientes: j.client_ids ? j.client_ids.length : s.clientes,
           client_ids: j.client_ids || [],
           clickup_message_id: j.clickup_message_id || null,
@@ -1589,7 +1743,7 @@ async function publicar(saidas, canalEnsaio) {
 function abrirCorrecao(r) {
   const dlg = $("#dlg-num");
   const base = r.payload; // o contrato como o banco devolveu — o "de"
-  const atual = correcaoDe(S.semana, r.client_id) || { campos: {}, motivo: "" };
+  const atual = correcaoDe(chaveP(), r.client_id) || { campos: {}, motivo: "" };
   const campos = camposCorrigiveis(base);
 
   $("#num-cliente").textContent = base.identificacao.cliente;
@@ -1679,7 +1833,7 @@ function abrirCorrecao(r) {
   pintar();
 
   $("#num-limpar").onclick = () => {
-    salvarCorrecao(S.semana, r.client_id, null);
+    salvarCorrecao(chaveP(), r.client_id, null);
     dlg.close();
     aviso("Correções descartadas — o bloco voltou aos números do banco.", "info");
     reescreverSePreciso(r);
@@ -1693,7 +1847,7 @@ function abrirCorrecao(r) {
       $("#num-motivo").focus();
       return;
     }
-    salvarCorrecao(S.semana, r.client_id, Object.keys(fora).length ? { campos: fora, motivo } : null);
+    salvarCorrecao(chaveP(), r.client_id, Object.keys(fora).length ? { campos: fora, motivo } : null);
     dlg.close();
     reescreverSePreciso(r);
   };
@@ -1706,7 +1860,7 @@ function abrirCorrecao(r) {
  *  de graça. Se a pessoa escreveu, NÃO sobrescreve: avisa, porque o texto
  *  ainda cita o número antigo e quem decide a palavra final é ela. */
 function reescreverSePreciso(r) {
-  const d = rascunhoDe(S.semana, r.client_id);
+  const d = rascunhoDe(chaveP(), r.client_id);
   if (!d || !d.texto) {
     render();
     return;
@@ -1752,7 +1906,7 @@ function abrirCS() {
       <div style="display:grid;gap:6px">
         <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
           <input type="radio" name="cs-escopo" value="semana" checked>
-          <span>A <b>semana toda</b> — todos os blocos prontos</span></label>
+          <span>O <b>período todo</b> — todos os blocos prontos</span></label>
         <label style="display:flex;gap:8px;align-items:center;cursor:${selecionado ? "pointer" : "not-allowed"};opacity:${selecionado ? 1 : 0.5}">
           <input type="radio" name="cs-escopo" value="cliente" ${selecionado ? "" : "disabled"}>
           <span>Só <b>${esc(selecionado ? selecionado.client_name : "o cliente aberto")}</b></span></label>
@@ -1764,11 +1918,11 @@ function abrirCS() {
       <div class="fh"><span class="fl">Para quem</span></div>
       <div style="display:grid;gap:6px">
         ${CS.map((c) => {
-          const j = envioCSDe(S.semana, c.id);
+          const j = envioCSDe(chaveP(), c.id);
           return `<label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
             <input type="checkbox" class="cs-quem" value="${c.id}" style="margin-top:3px">
             <span><b>${esc(c.curto)}</b> <span class="meta">${esc(c.nome)}</span>
-            ${j ? `<span class="chip critical" style="margin-left:6px">já recebeu esta semana · ${new Date(j.em).toLocaleString("pt-BR")}</span>` : ""}
+            ${j ? `<span class="chip critical" style="margin-left:6px">já recebeu este período · ${new Date(j.em).toLocaleString("pt-BR")}</span>` : ""}
             </span></label>`;
         }).join("")}
       </div>
@@ -1790,7 +1944,7 @@ function abrirCS() {
     const clientes = [...porGestor.values()].reduce((a, b) => a + b.length, 0);
     $("#cs-resumo").innerHTML = `
       <div class="mesbox">
-        <span class="lbl">${esc(rotuloSemana(S.semana))}</span>
+        <span class="lbl">${esc(rotuloP())}</span>
         <span>Clientes: <b>${clientes}</b></span>
         <span>Mensagens por CS: <b>${porGestor.size}</b> (uma por gestor)</span>
         <span>Gestores: <b>${[...porGestor.keys()].map(esc).join(", ") || "—"}</b></span>
@@ -1818,8 +1972,9 @@ function abrirCS() {
           cs,
           gestor,
           blocos,
-          periodo: rotuloSemana(S.semana),
+          periodo: rotuloP(),
           week_start: S.semana,
+          week_end: fimP(),
         });
         saidas.push({ gestor, mensagem: j.mensagem, caracteres: j.caracteres });
       } catch (e) {
@@ -1866,8 +2021,9 @@ async function enviarParaCS(ids, escopo) {
       cs: ids[0],
       gestor: gestor1,
       blocos: blocos1,
-      periodo: rotuloSemana(S.semana),
+      periodo: rotuloP(),
       week_start: S.semana,
+      week_end: fimP(),
     });
     if (prova.destino !== "cs" || !prova.cs_nome || !prova.channel_id) {
       throw new Error(
@@ -1891,8 +2047,9 @@ async function enviarParaCS(ids, escopo) {
           cs,
           gestor,
           blocos,
-          periodo: rotuloSemana(S.semana),
+          periodo: rotuloP(),
           week_start: S.semana,
+          week_end: fimP(),
           confirmar: true,
         });
         if (j.dry_run) falhas.push(`${quem.curto}/${gestor}: voltou dry-run — ${j.motivo_dry_run}`);
@@ -1902,7 +2059,7 @@ async function enviarParaCS(ids, escopo) {
       }
     }
     if (clientes) {
-      registrarEnvioCS(S.semana, cs, { clientes, escopo, mensagens: porGestor.size });
+      registrarEnvioCS(chaveP(), cs, { clientes, escopo, mensagens: porGestor.size });
       ok.push(`${quem.curto} (${clientes})`);
     }
   }
@@ -1920,7 +2077,7 @@ async function enviarParaCS(ids, escopo) {
 function baixarCorrecoesCSV() {
   const linhas = [["semana", "cliente", "client_id", "campo", "de", "para", "motivo", "corrigido_em"]];
   for (const c of correcoesDaSemana()) {
-    for (const i of c.itens) linhas.push([S.semana, c.cliente, c.client_id, i.rotulo, i.de, i.para, c.motivo, c.em]);
+    for (const i of c.itens) linhas.push([chaveP(), c.cliente, c.client_id, i.rotulo, i.de, i.para, c.motivo, c.em]);
   }
   if (linhas.length === 1) return aviso("Nenhuma correção nesta semana.");
   const csv = linhas
@@ -1928,7 +2085,7 @@ function baixarCorrecoesCSV() {
     .join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
-  a.download = `touchpoint-correcoes-${S.semana}.csv`;
+  a.download = `touchpoint-correcoes-${chaveP()}.csv`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
@@ -1951,7 +2108,7 @@ function exportarRascunhos() {
   );
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `touchpoint-rascunhos-${S.semana}.json`;
+  a.download = `touchpoint-rascunhos-${chaveP()}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
@@ -1959,38 +2116,58 @@ function exportarRascunhos() {
 /* ═══════════════════════════════ boot ═══════════════════════════════ */
 
 function ligar() {
-  $("#prev").onclick = () => {
-    S.semana = somaSemanas(S.semana, -1);
-    gravarJSON("tp_semana", S.semana);
-    carregarSemana();
+  // As setas andam o TAMANHO do recorte, não sete dias: num período de 15
+  // dias, "anterior" são os 15 dias colados atrás — o mesmo intervalo que a
+  // tela usa como comparação.
+  const andar = (sinal) => {
+    S.pend = null;
+    const d = diasP();
+    irPara(somaDias(S.semana, sinal * d), somaDias(fimP(), sinal * d));
   };
-  $("#next").onclick = () => {
-    const prox = somaSemanas(S.semana, 1);
-    if (prox > ultimaSemanaFechada()) {
-      aviso("A semana corrente nunca entra — só semana fechada.");
-      return;
-    }
-    S.semana = prox;
-    gravarJSON("tp_semana", S.semana);
-    carregarSemana();
-  };
+  $("#prev").onclick = () => andar(-1);
+  $("#next").onclick = () => andar(1);
   $("#recarregar").onclick = carregarSemana;
 
-  // Calendário: aceita qualquer dia e cai na SEGUNDA daquela semana — quem
-  // procura "a semana do dia 19" não deveria precisar saber que 19 é terça.
-  $("#f-data").onchange = (e) => {
+  /* ── recorte livre: de tal dia até tal dia ─────────────────────────
+     Os dois calendários só ANOTAM a escolha; quem carrega é o Aplicar.
+     Carregar a cada mudança dispararia uma leitura no meio da escolha —
+     e a leitura da semana leva ~2s. */
+  const anotar = (campo) => (e) => {
     const v = e.target.value;
     if (!v) return;
-    const alvo = segundaDa(v);
-    if (alvo > ultimaSemanaFechada()) {
-      aviso("A semana corrente nunca entra — só semana fechada.");
-      e.target.value = S.semana;
-      return;
+    S.pend = { ...pendente(), [campo]: v };
+    // escolher um começo depois do fim é engano de digitação, não intenção:
+    // o fim acompanha, e a pessoa corrige depois se quiser.
+    if (campo === "de" && S.pend.de > S.pend.ate) S.pend.ate = S.pend.de;
+    if (campo === "ate" && S.pend.ate < S.pend.de) S.pend.de = S.pend.ate;
+    renderBarra();
+  };
+  $("#f-de").onchange = anotar("de");
+  $("#f-ate").onchange = anotar("ate");
+  $("#btn-aplicar").onclick = () => {
+    const { de, ate } = pendente();
+    S.pend = null;
+    if (!irPara(de, ate)) renderBarra();
+  };
+
+  /* Atalhos. Todos terminam ONTEM, menos os dois que têm fim próprio. */
+  $("#f-atalho").onchange = (e) => {
+    const v = e.target.value;
+    if (!v) return;
+    S.pend = null;
+    const fim = ontem();
+    if (v === "semana") {
+      const ws = ultimaSemanaFechada();
+      irPara(ws, domingoDa(ws));
+    } else if (v === "mes") {
+      irPara(primeiroDoMes(fim), fim);
+    } else if (v === "mespassado") {
+      const fimPassado = somaDias(primeiroDoMes(fim), -1);
+      irPara(primeiroDoMes(fimPassado), fimPassado);
+    } else {
+      irPara(somaDias(fim, -(Number(v) - 1)), fim);
     }
-    if (alvo === S.semana) return;
-    S.semana = alvo;
-    gravarJSON("tp_semana", S.semana);
-    carregarSemana();
+    e.target.value = "";
   };
 
   const filtro = (id, campo, evento = "onchange") => {
@@ -2012,7 +2189,7 @@ function ligar() {
 
   $("#btn-todos").onclick = escreverTodos;
   $("#btn-envio").onclick = montarEnvio;
-  $("#btn-cs").onclick = abrirCS;
+  // “Enviar para CS” agora vive no rodapé do cartão, junto do texto final.
   $("#btn-cfg").onclick = abrirAjustes;
   $("#btn-export").onclick = exportarRascunhos;
   $("#cfg-salvar").onclick = () => {

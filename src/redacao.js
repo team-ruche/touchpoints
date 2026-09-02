@@ -70,6 +70,71 @@ export function addDias(iso, n) {
   return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate());
 }
 
+/** 0 = domingo, 1 = segunda … em UTC puro, como o resto do arquivo. */
+export function diaDaSemana(iso) {
+  return new Date(
+    Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))),
+  ).getUTCDay();
+}
+
+/* ═════════════════ período que não é semana ═════════════════
+ *
+ * A tela passou a aceitar intervalo livre (de tal dia até tal dia). O texto
+ * inteiro deste arquivo foi escrito para SEMANA — e escrever "a semana
+ * fechou com 40 leads" num recorte de 21 dias é exatamente o defeito que
+ * originou o projeto: número certo, rótulo falso.
+ *
+ * Em vez de duplicar todos os cenários, a troca é feita na saída, com
+ * vocabulário fechado: `semana` vira `período`, o determinante feminino que
+ * ficou pendurado concorda, e a semana FUTURA de verdade ("na próxima
+ * semana", "semana que vem", "na semana seguinte") não é tocada — ela fala
+ * de uma semana do calendário, não do recorte medido.
+ *
+ * `testar_redacao.mjs --periodo` roda os 88 blocos reais como período de 21
+ * dias e reprova qualquer "semana" que sobre fora da lista de futuro e
+ * qualquer concordância quebrada.
+ */
+
+/** Determinante feminino → masculino, para quando o substantivo troca. */
+const DETERMINANTE = {
+  a: "o", as: "os", da: "do", das: "dos", na: "no", nas: "nos", à: "ao", às: "aos",
+  pela: "pelo", pelas: "pelos", uma: "um", umas: "uns", esta: "este", estas: "estes",
+  essa: "esse", essas: "esses", aquela: "aquele", aquelas: "aqueles", nesta: "neste",
+  nestas: "nestes", nessa: "nesse", nessas: "nesses", desta: "deste", destas: "destes",
+  dessa: "desse", dessas: "desses", mesma: "mesmo", mesmas: "mesmos", outra: "outro",
+  outras: "outros", toda: "todo", todas: "todos", inteira: "inteiro", passada: "passado",
+};
+
+const casar = (molde, palavra) =>
+  molde.charAt(0) === molde.charAt(0).toUpperCase() ? palavra.charAt(0).toUpperCase() + palavra.slice(1) : palavra;
+
+export function paraPeriodo(txt) {
+  if (!txt) return txt;
+  const guardados = [];
+  let s = String(txt);
+
+  /* 1. semana de verdade (futura) sai da jogada */
+  s = s.replace(/pr[óo]ximas?\s+semanas?|semanas?\s+(?:que\s+vem|seguinte)/gi, (m) => {
+    guardados.push(m);
+    // marcador impossível no texto: NUL não sobrevive a nenhuma entrada.
+    // Índice entre espaços colidiria com "40 leads".
+    return "\u0000" + (guardados.length - 1) + "\u0000";
+  });
+
+  /* 2. o recorte medido deixa de se chamar semana */
+  s = s.replace(/\bsemana\s+passada\b/gi, (m) => casar(m, "período anterior"));
+  s = s.replace(/\bsemanas\b/gi, (m) => casar(m, "períodos"));
+  s = s.replace(/\bsemana\b/gi, (m) => casar(m, "período"));
+
+  /* 3. o determinante que sobrou no feminino concorda */
+  s = s.replace(/\b([A-Za-zÀ-ÿ]+)(\s+)(per[íi]odos?)\b/g, (m, det, sp, per) => {
+    const novo = DETERMINANTE[det.toLowerCase()];
+    return novo ? casar(det, novo) + sp + per : m;
+  });
+
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => guardados[Number(i)]);
+}
+
 /** Primeiro dia do mês seguinte ao da data. */
 function primeiroDoProximoMes(iso) {
   const Y = Number(iso.slice(0, 4));
@@ -295,15 +360,22 @@ export function redigir(p, escolhas) {
   const opt = (p.contexto_mb || [])[0] || null;
   const um = sorteador(p);
 
-  /* Datas reais, todas derivadas do domingo que fecha a semana. Nenhum
-     "em breve": o checklist 8.8 reprova e o cliente não consegue cobrar. */
+  /* Datas reais, todas derivadas do fim do período. Nenhum "em breve": o
+     checklist 8.8 reprova e o cliente não consegue cobrar.
+
+     O texto diz o nome do dia ("na segunda, 24/08"), então a âncora é a
+     PRÓXIMA SEGUNDA depois do fim — não `fim + 1`. Num período fechado em
+     domingo as duas contas dão o mesmo dia, que é como isto rodou até aqui;
+     num período que termina numa terça, `fim + 1` seria uma quarta chamada
+     de segunda. */
   const fim = p.semana.fim;
+  const proximaSegunda = addDias(fim, (8 - diaDaSemana(fim)) % 7 || 7);
   const ctx = {
-    segunda: addDias(fim, 1),
-    terca: addDias(fim, 2),
-    quarta: addDias(fim, 3),
-    sexta: addDias(fim, 5),
-    proximoDomingo: addDias(fim, 7),
+    segunda: proximaSegunda,
+    terca: addDias(proximaSegunda, 1),
+    quarta: addDias(proximaSegunda, 2),
+    sexta: addDias(proximaSegunda, 4),
+    proximoDomingo: addDias(proximaSegunda, 6),
     proximoCiclo: primeiroDoProximoMes(fim),
   };
   /* Quando existe otimização registrada com data de validação, ela manda:
@@ -342,8 +414,16 @@ export function redigir(p, escolhas) {
         ? "os " + meta + " agendamentos contratados para o mês"
         : "a referência de " + meta + " agendamentos da sua vertical";
   const faltaMes = meta == null ? null : meta - p.mes.agendamentos;
-  const noMes =
-    alvoMes == null
+  /* O mês só entra em prosa quando ele CONTÉM o período. Num recorte livre
+     que atravessa a virada (20/08 a 05/09), o bloco "📊 No mês" é o mês do
+     último dia — 1º a 5 de setembro — e citá-lo logo depois dos números de
+     17 dias põe dois números que não podem coexistir na mesma frase. O
+     cabeçalho da mensagem continua imprimindo o mês COM as datas dele, que
+     é o que impede a linha de mentir. */
+  const mesContemPeriodo = !p.mes.inicio || p.mes.inicio <= p.semana.inicio;
+  const noMes = !mesContemPeriodo
+    ? ""
+    : alvoMes == null
       ? /* frase nominal: "No mês são nenhum lead" não concorda, e cliente sem
            meta e sem benchmark (meta_usada nula) caía exatamente aí */
         "No mês, " +
@@ -444,8 +524,8 @@ export function redigir(p, escolhas) {
           contraAlvo +
           " — a parte de anúncios está entregando",
         (agendaSemMidia ? agendaSemMidia + ". " : "") +
-          noMes +
-          ". O que decide o próximo agendamento agora é o tempo entre o lead entrar e alguém falar com ele",
+          (noMes ? noMes + ". " : "") +
+          "O que decide o próximo agendamento agora é o tempo entre o lead entrar e alguém falar com ele",
       ]);
       proximo_passo =
         "Vamos levantar os " +
@@ -636,7 +716,7 @@ export function redigir(p, escolhas) {
           quantos(ant.leads, "lead", "leads") +
           " na semana anterior" +
           (opt && opt.acao ? ", depois de " + String(opt.acao).replace(/\.$/, "").toLowerCase() : ""),
-        noMes + ". É uma virada de uma semana, e o que interessa agora é se ela se repete",
+        (noMes ? noMes + ". " : "") + "É uma virada de uma semana, e o que interessa agora é se ela se repete",
       ]);
       proximo_passo =
         "Mantemos exatamente a configuração que produziu esta virada e conferimos na leitura de " +
@@ -683,6 +763,15 @@ export function redigir(p, escolhas) {
     }
   }
 
+  /* ── recorte livre: a palavra "semana" deixa de ser verdade ──────
+     Roda ANTES das guardas de propósito: o léxico e o prazo têm de ser
+     conferidos no texto que o cliente vai ler, não no que a régua montou. */
+  if (p.semana.padrao === false) {
+    como_foi = paraPeriodo(como_foi);
+    proximo_passo = paraPeriodo(proximo_passo);
+    pedido_cliente = paraPeriodo(pedido_cliente);
+  }
+
   /* ── guardas de saída: as mesmas da Fase 3, agora rodando contra um
      texto que a gente controla. Se algo aqui acusar, é bug meu. ──── */
   const todo = como_foi + " " + proximo_passo + " " + pedido_cliente;
@@ -693,6 +782,8 @@ export function redigir(p, escolhas) {
     ok: true,
     cliente: p.identificacao.cliente,
     week_start: p.semana.inicio,
+    week_end: p.semana.fim,
+    dias: p.semana.dias || null,
     cenario: cen,
     como_foi: como_foi,
     proximo_passo: proximo_passo,
